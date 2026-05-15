@@ -15,13 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Conduit modifications (marked RADAR):
-//   - SERVER_WRITE_MARK read from RadarConfig instead of being hardcoded
-//   - IP_TOS elevated to 0x28 (DSCP CS1 for bulk → 0x18 for interactive) — configurable
-//   - SO_BACKLOG set to 1024 (up from Netty default of 128) for large player counts
-//   - Thread names include "radar-" prefix for easier identification in thread dumps
-// All other logic is identical to upstream dev/3.0.0.
-
 package com.velocitypowered.proxy.network;
 
 import com.google.common.base.Preconditions;

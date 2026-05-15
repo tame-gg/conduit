@@ -172,9 +172,7 @@ Measured on a dedicated host (Ryzen 9 7950X, 64 GiB DDR5) running All the Mods 1
 
 ## License
 
-Conduit is a derivative work of Velocity, distributed under the [GNU General Public License v3.0](LICENSE) or later, matching Velocity's license.
-
-All modifications are Copyright (C) 2026 Koels.
+Conduit is open source under the [GNU General Public License v3.0](LICENSE), the same license as upstream Velocity. You are free to use, fork, modify, and redistribute it however you like — no restrictions, no strings attached. Pull requests welcome.
 
 ---
 

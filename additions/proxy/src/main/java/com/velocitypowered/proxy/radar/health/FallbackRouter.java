@@ -37,32 +37,49 @@ import org.apache.logging.log4j.Logger;
  *   <li>Any other healthy server registered with the proxy, excluding the kicked-from server.</li>
  * </ol>
  *
- * <p>If no suitable server can be found, the event result is left unchanged so Velocity applies
+ * <p>If no suitable server can be found the event result is left unchanged so Velocity applies
  * its default behaviour (disconnect).
  */
-public final class FallbackRouter {
+public class FallbackRouter {
 
   private static final Logger logger = LogManager.getLogger(FallbackRouter.class);
 
+  /** A no-op router returned when fallback routing is disabled. */
+  public static final FallbackRouter DISABLED = new FallbackRouter(
+      BackendHealthChecker.DISABLED, List.of(), null) {
+    @Override
+    public void register(ProxyServer proxy) {
+      // no-op
+    }
+
+    @Override
+    public void onKickedFromServer(KickedFromServerEvent event) {
+      // no-op
+    }
+  };
+
   private final BackendHealthChecker healthChecker;
   private final List<String> configuredFallbacks;
+  private final ProxyServer proxy;
 
   /**
-   * Constructs a {@code FallbackRouter} backed by the given health checker and preferred fallback
-   * server list.
+   * Constructs a {@code FallbackRouter}.
    *
    * @param healthChecker       the health checker used to filter out unhealthy servers
    * @param configuredFallbacks ordered list of preferred fallback server names from the config
+   * @param proxy               the proxy server used to enumerate registered servers
    */
-  public FallbackRouter(BackendHealthChecker healthChecker, List<String> configuredFallbacks) {
+  public FallbackRouter(BackendHealthChecker healthChecker, List<String> configuredFallbacks,
+      ProxyServer proxy) {
     this.healthChecker = healthChecker;
     this.configuredFallbacks = configuredFallbacks;
+    this.proxy = proxy;
   }
 
   /**
-   * Registers this router as an event listener on the given proxy.
+   * Registers this router as an event listener on the proxy.
    *
-   * @param proxy the proxy server whose event manager will receive registrations
+   * @param proxy the proxy server whose event manager will receive this listener
    */
   public void register(ProxyServer proxy) {
     proxy.getEventManager().register(this, this);
@@ -71,24 +88,18 @@ public final class FallbackRouter {
   }
 
   /**
-   * Handles a {@link KickedFromServerEvent} by attempting to find a healthy fallback server.
+   * Handles a {@link KickedFromServerEvent} by redirecting the player to a healthy fallback server.
    *
    * @param event the kick event
    */
   @Subscribe
   public void onKickedFromServer(KickedFromServerEvent event) {
     if (!event.kickedDuringServerConnect()) {
-      // Voluntary disconnects do not need rerouting.
       return;
     }
 
     String kickedFrom = event.getServer().getServerInfo().getName();
-    ProxyServer proxy = event.getPlayer().getCurrentServer()
-        .map(cs -> null) // can't get proxy from player; use field lookup below
-        .orElse(null);
-
-    // Resolve fallback using the proxy reference stored on the player's connection.
-    Optional<RegisteredServer> target = findFallback(event, kickedFrom);
+    Optional<RegisteredServer> target = resolveTarget(kickedFrom);
     if (target.isPresent()) {
       event.setResult(KickedFromServerEvent.RedirectPlayer.create(target.get()));
       logger.info("[Conduit] FallbackRouter: rerouting {} (kicked from '{}') to '{}'.",
@@ -96,100 +107,32 @@ public final class FallbackRouter {
           kickedFrom,
           target.get().getServerInfo().getName());
     } else {
-      logger.info("[Conduit] FallbackRouter: no healthy fallback available for {} (kicked from"
-          + " '{}'); player will be disconnected.",
+      logger.info("[Conduit] FallbackRouter: no healthy fallback for {} (kicked from '{}');"
+          + " player will be disconnected.",
           event.getPlayer().getUsername(), kickedFrom);
     }
   }
 
-  private Optional<RegisteredServer> findFallback(KickedFromServerEvent event, String kickedFrom) {
-    // We need the registered server list; access via the current server or event server's proxy.
-    // Since ProxyServer is not directly available here, we use the registered server list
-    // resolved through the event's server instance (VelocityServer implements ProxyServer).
-    // The event.getServer() is a RegisteredServer; we cannot easily get the proxy from it.
-    // We delegate resolution to a helper that accepts the event player's proxy handle.
-    // In practice, Velocity calls listeners with full context available via injected fields or
-    // the singleton. We rely on the overloaded variant below that takes the proxy explicitly.
+  private Optional<RegisteredServer> resolveTarget(String kickedFrom) {
+    // 1. Try configured fallbacks in order.
+    for (String name : configuredFallbacks) {
+      if (name.equals(kickedFrom)) {
+        continue;
+      }
+      Optional<RegisteredServer> rs = proxy.getServer(name);
+      if (rs.isPresent() && healthChecker.isHealthy(rs.get())) {
+        return rs;
+      }
+    }
+    // 2. Try any healthy server that is not the kicked-from server.
+    for (RegisteredServer server : proxy.getAllServers()) {
+      if (server.getServerInfo().getName().equals(kickedFrom)) {
+        continue;
+      }
+      if (healthChecker.isHealthy(server)) {
+        return Optional.of(server);
+      }
+    }
     return Optional.empty();
-  }
-
-  /**
-   * Handles a {@link KickedFromServerEvent} with explicit access to the proxy server.
-   * This variant is preferred when the router is constructed with the proxy pre-bound.
-   */
-  static final class Bound extends FallbackRouter {
-
-    private final ProxyServer proxy;
-
-    /**
-     * Constructs a proxy-bound {@code FallbackRouter}.
-     *
-     * @param healthChecker       the health checker to consult
-     * @param configuredFallbacks ordered list of preferred fallback server names
-     * @param proxy               the proxy server used to enumerate registered servers
-     */
-    Bound(BackendHealthChecker healthChecker, List<String> configuredFallbacks,
-        ProxyServer proxy) {
-      super(healthChecker, configuredFallbacks);
-      this.proxy = proxy;
-    }
-
-    @Override
-    @Subscribe
-    public void onKickedFromServer(KickedFromServerEvent event) {
-      if (!event.kickedDuringServerConnect()) {
-        return;
-      }
-
-      String kickedFrom = event.getServer().getServerInfo().getName();
-      Optional<RegisteredServer> target = resolveTarget(kickedFrom);
-      if (target.isPresent()) {
-        event.setResult(KickedFromServerEvent.RedirectPlayer.create(target.get()));
-        logger.info("[Conduit] FallbackRouter: rerouting {} (kicked from '{}') to '{}'.",
-            event.getPlayer().getUsername(),
-            kickedFrom,
-            target.get().getServerInfo().getName());
-      } else {
-        logger.info("[Conduit] FallbackRouter: no healthy fallback for {} (kicked from '{}');"
-            + " player will be disconnected.",
-            event.getPlayer().getUsername(), kickedFrom);
-      }
-    }
-
-    private Optional<RegisteredServer> resolveTarget(String kickedFrom) {
-      // 1. Try configured fallbacks in order.
-      for (String name : configuredFallbacks) {
-        if (name.equals(kickedFrom)) {
-          continue;
-        }
-        Optional<RegisteredServer> rs = proxy.getServer(name);
-        if (rs.isPresent() && healthChecker.isHealthy(rs.get())) {
-          return rs;
-        }
-      }
-      // 2. Try any healthy server that is not the kicked-from server.
-      for (RegisteredServer server : proxy.getAllServers()) {
-        if (server.getServerInfo().getName().equals(kickedFrom)) {
-          continue;
-        }
-        if (healthChecker.isHealthy(server)) {
-          return Optional.of(server);
-        }
-      }
-      return Optional.empty();
-    }
-  }
-
-  /**
-   * Creates a {@code FallbackRouter} that is pre-bound to the given proxy server.
-   *
-   * @param healthChecker       the health checker to consult
-   * @param configuredFallbacks ordered list of preferred fallback server names
-   * @param proxy               the proxy server
-   * @return a new proxy-bound router instance
-   */
-  public static FallbackRouter create(BackendHealthChecker healthChecker,
-      List<String> configuredFallbacks, ProxyServer proxy) {
-    return new Bound(healthChecker, configuredFallbacks, proxy);
   }
 }

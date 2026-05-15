@@ -17,8 +17,8 @@
 
 package com.velocitypowered.proxy.conduit.modded;
 
-import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
+import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
 import java.nio.charset.StandardCharsets;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;

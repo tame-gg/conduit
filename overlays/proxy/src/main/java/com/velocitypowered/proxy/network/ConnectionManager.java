@@ -99,6 +99,10 @@ public final class ConnectionManager {
     this.backendChannelInitializer = new BackendChannelInitializerHolder(
         new BackendChannelInitializer(server));
     this.resolver = new SeparatePoolInetNameResolver(GlobalEventExecutor.INSTANCE);
+  }
+
+  /** Logs the channel type, compression, and cipher variants in use. */
+  public void logChannelInformation() {
     LOGGER.info("Connections will use {} channels, {} compression, {} ciphers",
         this.transportType, Natives.compress.getLoadedVariant(),
         Natives.cipher.getLoadedVariant());

@@ -126,7 +126,7 @@ public final class Conduit {
     logger.info("[Conduit] All subsystems started against proxy.");
   }
 
-  /** Reloads radar.toml and pushes new values into all live subsystems. */
+  /** Reloads conduit.toml and pushes new values into all live subsystems. */
   public void reload(Path configDir) {
     logger.info("[Conduit] Reloading configuration...");
     RadarConfig newConfig = RadarConfig.load(configDir);

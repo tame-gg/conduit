@@ -31,7 +31,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Loads and exposes all Conduit-specific settings from {@code radar.toml}.
+ * Loads and exposes all Conduit-specific settings from {@code conduit.toml}.
  *
  * <p>Keeping this in a separate file (rather than patching velocity.toml) means upstream
  * VelocityConfiguration can be merged without conflicts.
@@ -115,11 +115,27 @@ public final class RadarConfig {
     this.botFilterThreshold = b.botFilterThreshold;
   }
 
-  /** Loads (or generates) {@code radar.toml} from the given directory, then pushes live values. */
+  /**
+   * Loads (or generates) {@code conduit.toml} from the given directory, then pushes live values.
+   *
+   * <p>If {@code conduit.toml} does not exist but a legacy {@code radar.toml} is present (from
+   * Conduit v1.0.x), the file is renamed automatically so existing configuration is preserved.
+   */
   public static RadarConfig load(Path configDir) {
-    Path file = configDir.resolve("radar.toml");
+    Path file = configDir.resolve("conduit.toml");
     if (!Files.exists(file)) {
-      extractDefault(file);
+      Path legacy = configDir.resolve("radar.toml");
+      if (Files.exists(legacy)) {
+        try {
+          Files.move(legacy, file);
+          logger.info("[Conduit] Renamed radar.toml → conduit.toml (one-time migration).");
+        } catch (IOException e) {
+          logger.warn("[Conduit] Could not rename radar.toml to conduit.toml: {}", e.getMessage());
+          file = legacy;
+        }
+      } else {
+        extractDefault(file);
+      }
     }
 
     try (CommentedFileConfig toml = CommentedFileConfig.of(file)) {
@@ -186,7 +202,7 @@ public final class RadarConfig {
 
   /** Pushes config values into subsystems that cache them statically for hot-path performance. */
   private void applyLiveValues() {
-    // JVM property still beats the config file — documented in radar.toml
+    // JVM property still beats the config file — documented in conduit.toml
     if (System.getProperty("velocity.max-known-packs") == null) {
       KnownPacksPacket.setMaxKnownPacks(maxKnownPacks);
       logger.info("[Conduit] max-known-packs set to {}", maxKnownPacks);
@@ -198,15 +214,15 @@ public final class RadarConfig {
 
   private static void extractDefault(Path dest) {
     try (InputStream in = RadarConfig.class.getResourceAsStream(
-        "/com/velocitypowered/proxy/radar/radar.toml")) {
+        "/com/velocitypowered/proxy/radar/conduit.toml")) {
       if (in == null) {
-        logger.error("[Conduit] Default radar.toml not found in jar — using built-in defaults.");
+        logger.error("[Conduit] Default conduit.toml not found in jar — using built-in defaults.");
         return;
       }
       Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
-      logger.info("[Conduit] Generated default radar.toml");
+      logger.info("[Conduit] Generated default conduit.toml");
     } catch (IOException e) {
-      logger.error("[Conduit] Failed to extract radar.toml: {}", e.getMessage());
+      logger.error("[Conduit] Failed to extract conduit.toml: {}", e.getMessage());
     }
   }
 

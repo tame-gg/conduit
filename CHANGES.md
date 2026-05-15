@@ -28,7 +28,7 @@ whenever Velocity's obfuscation changes the field name.  Integrating it directly
 * Allows live reload via `/radarvelocity reload` without a proxy restart.
 * Is transparent to plugin authors — the packet class is otherwise identical.
 
-**Default configured value:** 1 024 (see `radar.toml → [modded] → max-known-packs`).
+**Default configured value:** 1 024 (see `conduit.toml → [modded] → max-known-packs`).
 
 ---
 
@@ -63,7 +63,7 @@ Central lifecycle manager.  Initialised once by the patched `VelocityServer` bef
 can connect.  Owns references to all Conduit subsystems.
 
 #### `RadarConfig.java`
-Reads `radar.toml` from the same directory as `velocity.toml`.  Sections:
+Reads `conduit.toml` from the same directory as `velocity.toml`.  Sections:
 - `[modded]` — Known-packs limit, handshake cache, NeoForge/Forge compat flags.
 - `[network]` — Write-buffer watermarks, smart compression, packet-queue settings, connection throttle.
 - `[diagnostics]` — Optional structured logging, mod-handshake tracing, slow-login thresholds.
@@ -128,7 +128,7 @@ existing `login-ratelimit` (which acts later, after the handshake packet).
 #### `RadarDiagnostics.java`
 Lock-free `LongAdder` counters for all Conduit events (connections, cache hits/misses,
 throttle drops, slow logins, compression skips, queue flushes).  Emits structured log lines when
-`diagnostics.enabled = true` in `radar.toml`.  Exposes a `buildSummary()` string consumed by
+`diagnostics.enabled = true` in `conduit.toml`.  Exposes a `buildSummary()` string consumed by
 the `/radarvelocity diagnostics` command.
 
 ---
@@ -138,7 +138,7 @@ the `/radarvelocity diagnostics` command.
 | Concern | Status |
 |---------|--------|
 | Velocity plugin API | **Unchanged.** All additions are in `proxy` internals, not `api`. |
-| `velocity.toml` format | **Unchanged.** New settings live in `radar.toml`. |
+| `velocity.toml` format | **Unchanged.** New settings live in `conduit.toml`. |
 | Paper / Spigot backends | **Full support.** No changes to backend protocol handling. |
 | Fabric backends | **Full support.** |
 | Legacy Forge (FML1/FML2) | **Improved.** Better handshake logging and address parsing. |

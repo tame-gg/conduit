@@ -51,12 +51,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 /**
  * Manages endpoints managed by Velocity, along with initializing the Netty event loop group.
  *
- * <p>Conduit: write-buffer watermarks are configurable via radar.toml instead of being
+ * <p>Conduit: write-buffer watermarks are configurable via conduit.toml instead of being
  * hardcoded.  This allows large-scale networks to tune memory vs. latency trade-offs.
  */
 public final class ConnectionManager {
 
-  // RADAR: watermarks are resolved lazily from RadarConfig so they honour radar.toml settings.
+  // Watermarks are resolved lazily from RadarConfig so they honour conduit.toml settings.
   // Fallback to vanilla values (1 MiB low / 2 MiB high) if Conduit is not yet initialised.
   private static WriteBufferWaterMark resolveWriteMark() {
     try {

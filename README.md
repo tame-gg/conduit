@@ -156,20 +156,6 @@ The overlay surface is intentionally minimal (two files) so merges stay straight
 
 ---
 
-## Benchmarks
-
-Measured on a dedicated host (Ryzen 9 7950X, 64 GiB DDR5) running All the Mods 10 (450+ mods). Stock Velocity `dev/3.0.0` vs Conduit with default settings.
-
-| Metric | Stock Velocity | Conduit | Delta |
-|--------|---------------|---------|-------|
-| Initial join time (cold cache) | 3 820 ms | 3 560 ms | **–7%** |
-| Re-join via proxy switch (warm cache) | 3 820 ms | 3 380 ms | **–12%** |
-| Compression thread CPU @ 200 players | 18% | 15% | **–17%** |
-| Memory @ 200 players | 2 310 MiB | 2 290 MiB | –1% |
-| Modded client join success (500-mod pack) | ~0% (64-pack limit) | **100%** | max-known-packs fix |
-
----
-
 ## License
 
 Conduit is open source under the [GNU General Public License v3.0](LICENSE), the same license as upstream Velocity. You are free to use, fork, modify, and redistribute it however you like — no restrictions, no strings attached. Pull requests welcome.

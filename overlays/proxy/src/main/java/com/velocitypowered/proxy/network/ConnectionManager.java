@@ -27,8 +27,8 @@ import com.velocitypowered.natives.util.Natives;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.network.netty.SeparatePoolInetNameResolver;
 import com.velocitypowered.proxy.protocol.netty.GameSpyQueryHandler;
-import com.velocitypowered.proxy.radar.Conduit;
-import com.velocitypowered.proxy.radar.RadarConfig;
+import com.velocitypowered.proxy.conduit.Conduit;
+import com.velocitypowered.proxy.conduit.ConduitConfig;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -56,11 +56,11 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  */
 public final class ConnectionManager {
 
-  // Watermarks are resolved lazily from RadarConfig so they honour conduit.toml settings.
+  // Watermarks are resolved lazily from ConduitConfig so they honour conduit.toml settings.
   // Fallback to vanilla values (1 MiB low / 2 MiB high) if Conduit is not yet initialised.
   private static WriteBufferWaterMark resolveWriteMark() {
     try {
-      RadarConfig cfg = Conduit.get().getConfig();
+      ConduitConfig cfg = Conduit.get().getConfig();
       return new WriteBufferWaterMark(cfg.getWriteBufferLowWatermark(),
           cfg.getWriteBufferHighWatermark());
     } catch (IllegalStateException ignored) {
@@ -114,7 +114,7 @@ public final class ConnectionManager {
    * @param address the address to bind to
    */
   public void bind(final InetSocketAddress address) {
-    // RADAR: resolve write-buffer watermarks from RadarConfig at bind time.
+    // RADAR: resolve write-buffer watermarks from ConduitConfig at bind time.
     WriteBufferWaterMark writeMark = resolveWriteMark();
 
     final ServerBootstrap bootstrap = new ServerBootstrap()

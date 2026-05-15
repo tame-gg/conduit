@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar.motd;
+package com.velocitypowered.proxy.conduit.motd;
 
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyPingEvent;
@@ -47,7 +47,7 @@ public class MotdCache {
    */
   public static final MotdCache DISABLED = new MotdCache(2000) {
     @Override
-    public void register(ProxyServer proxy) {
+    public void register(Object plugin, ProxyServer proxy) {
       // no-op — MOTD caching is disabled
     }
 
@@ -76,10 +76,11 @@ public class MotdCache {
   /**
    * Registers this cache as a {@link ProxyPingEvent} listener on the given proxy.
    *
-   * @param proxy the proxy server whose event manager will receive registrations
+   * @param plugin the owning plugin instance used for event registration
+   * @param proxy  the proxy server whose event manager will receive registrations
    */
-  public void register(ProxyServer proxy) {
-    proxy.getEventManager().register(this, this);
+  public void register(Object plugin, ProxyServer proxy) {
+    proxy.getEventManager().register(plugin, this);
     logger.info("[Conduit] MotdCache registered (TTL {}ms).", ttlMs);
   }
 

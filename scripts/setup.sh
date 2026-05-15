@@ -69,8 +69,8 @@ RADAR_VERSION=$(grep "^conduit.version=" "$ROOT_DIR/gradle.properties" | cut -d=
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_HASH=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-mkdir -p "$ROOT_DIR/proxy/src/main/resources/com/velocitypowered/proxy/radar"
-cat > "$ROOT_DIR/proxy/src/main/resources/com/velocitypowered/proxy/radar/radar-build.properties" <<EOF
+mkdir -p "$ROOT_DIR/proxy/src/main/resources/com/velocitypowered/proxy/conduit"
+cat > "$ROOT_DIR/proxy/src/main/resources/com/velocitypowered/proxy/conduit/conduit-build.properties" <<EOF
 conduit.version=$RADAR_VERSION
 conduit.build.time=$BUILD_TIME
 conduit.git.hash=$GIT_HASH

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar.health;
+package com.velocitypowered.proxy.conduit.health;
 
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
@@ -48,7 +48,7 @@ public class FallbackRouter {
   public static final FallbackRouter DISABLED = new FallbackRouter(
       BackendHealthChecker.DISABLED, List.of(), null) {
     @Override
-    public void register(ProxyServer proxy) {
+    public void register(Object plugin, ProxyServer proxy) {
       // no-op
     }
 
@@ -79,10 +79,11 @@ public class FallbackRouter {
   /**
    * Registers this router as an event listener on the proxy.
    *
-   * @param proxy the proxy server whose event manager will receive this listener
+   * @param plugin the owning plugin instance used for event registration
+   * @param proxy  the proxy server whose event manager will receive this listener
    */
-  public void register(ProxyServer proxy) {
-    proxy.getEventManager().register(this, this);
+  public void register(Object plugin, ProxyServer proxy) {
+    proxy.getEventManager().register(plugin, this);
     logger.info("[Conduit] FallbackRouter registered ({} configured fallbacks).",
         configuredFallbacks.size());
   }

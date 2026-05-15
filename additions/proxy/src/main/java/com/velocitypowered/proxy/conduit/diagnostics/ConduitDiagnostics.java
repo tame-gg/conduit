@@ -15,9 +15,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar.diagnostics;
+package com.velocitypowered.proxy.conduit.diagnostics;
 
-import com.velocitypowered.proxy.radar.RadarConfig;
+import com.velocitypowered.proxy.conduit.ConduitConfig;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 import org.apache.logging.log4j.LogManager;
@@ -33,9 +33,9 @@ import org.apache.logging.log4j.Logger;
  * <p>Planned integration: a future {@code /radarvelocity diagnostics} command will print a
  * formatted summary of all counters and the slowest-login histogram.
  */
-public final class RadarDiagnostics {
+public final class ConduitDiagnostics {
 
-  private static final Logger logger = LogManager.getLogger(RadarDiagnostics.class);
+  private static final Logger logger = LogManager.getLogger(ConduitDiagnostics.class);
 
   private volatile boolean enabled;
   private volatile boolean traceModHandshakes;
@@ -55,12 +55,12 @@ public final class RadarDiagnostics {
   /** Per-player login timing (player name → connect-start millis). */
   private final ConcurrentHashMap<String, Long> loginTimings = new ConcurrentHashMap<>();
 
-  public RadarDiagnostics(RadarConfig config) {
+  public ConduitDiagnostics(ConduitConfig config) {
     reconfigure(config);
   }
 
-  /** Updates configuration fields from a freshly loaded {@link RadarConfig}. */
-  public void reconfigure(RadarConfig config) {
+  /** Updates configuration fields from a freshly loaded {@link ConduitConfig}. */
+  public void reconfigure(ConduitConfig config) {
     this.enabled = config.isDiagnosticsEnabled();
     this.traceModHandshakes = config.isTraceModHandshakes();
     this.slowThresholdMs = config.getSlowConnectionThresholdMs();

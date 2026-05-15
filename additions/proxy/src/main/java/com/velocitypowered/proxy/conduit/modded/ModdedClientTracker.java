@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar.modded;
+package com.velocitypowered.proxy.conduit.modded;
 
 import java.util.Collections;
 import java.util.EnumSet;

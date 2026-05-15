@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar;
+package com.velocitypowered.proxy.conduit;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
@@ -36,9 +36,9 @@ import org.apache.logging.log4j.Logger;
  * <p>Keeping this in a separate file (rather than patching velocity.toml) means upstream
  * VelocityConfiguration can be merged without conflicts.
  */
-public final class RadarConfig {
+public final class ConduitConfig {
 
-  private static final Logger logger = LogManager.getLogger(RadarConfig.class);
+  private static final Logger logger = LogManager.getLogger(ConduitConfig.class);
   public static final int DEFAULT_MAX_KNOWN_PACKS = 1024;
 
   // ── Modded section ────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ public final class RadarConfig {
   private final int botFilterTimeoutMs;
   private final int botFilterThreshold;
 
-  private RadarConfig(Builder b) {
+  private ConduitConfig(Builder b) {
     this.maxKnownPacks = b.maxKnownPacks;
     this.handshakeCacheEnabled = b.handshakeCacheEnabled;
     this.handshakeCacheTtlSeconds = b.handshakeCacheTtlSeconds;
@@ -121,7 +121,7 @@ public final class RadarConfig {
    * <p>If {@code conduit.toml} does not exist but a legacy {@code radar.toml} is present (from
    * Conduit v1.0.x), the file is renamed automatically so existing configuration is preserved.
    */
-  public static RadarConfig load(Path configDir) {
+  public static ConduitConfig load(Path configDir) {
     Path file = configDir.resolve("conduit.toml");
     if (!Files.exists(file)) {
       Path legacy = configDir.resolve("radar.toml");
@@ -140,13 +140,13 @@ public final class RadarConfig {
 
     try (CommentedFileConfig toml = CommentedFileConfig.of(file)) {
       toml.load();
-      RadarConfig cfg = fromToml(toml);
+      ConduitConfig cfg = fromToml(toml);
       cfg.applyLiveValues();
       return cfg;
     }
   }
 
-  private static RadarConfig fromToml(CommentedConfig toml) {
+  private static ConduitConfig fromToml(CommentedConfig toml) {
     Builder b = new Builder();
 
     CommentedConfig modded = toml.get("modded");
@@ -197,7 +197,7 @@ public final class RadarConfig {
       b.botFilterThreshold = server.getIntOrElse("bot-filter-threshold", 10);
     }
 
-    return new RadarConfig(b);
+    return new ConduitConfig(b);
   }
 
   /** Pushes config values into subsystems that cache them statically for hot-path performance. */
@@ -213,8 +213,8 @@ public final class RadarConfig {
   }
 
   private static void extractDefault(Path dest) {
-    try (InputStream in = RadarConfig.class.getResourceAsStream(
-        "/com/velocitypowered/proxy/radar/conduit.toml")) {
+    try (InputStream in = ConduitConfig.class.getResourceAsStream(
+        "/com/velocitypowered/proxy/conduit/conduit.toml")) {
       if (in == null) {
         logger.error("[Conduit] Default conduit.toml not found in jar — using built-in defaults.");
         return;
@@ -386,7 +386,7 @@ public final class RadarConfig {
 
   // ── Builder ───────────────────────────────────────────────────────────────
 
-  /** Mutable builder used internally by {@link #fromToml} to construct a {@link RadarConfig}. */
+  /** Mutable builder used internally by {@link #fromToml} to construct a {@link ConduitConfig}. */
   private static final class Builder {
     int maxKnownPacks = DEFAULT_MAX_KNOWN_PACKS;
     boolean handshakeCacheEnabled = true;

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar.network;
+package com.velocitypowered.proxy.conduit.network;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;

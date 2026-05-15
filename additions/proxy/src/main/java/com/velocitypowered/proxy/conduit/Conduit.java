@@ -15,17 +15,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar;
+package com.velocitypowered.proxy.conduit;
 
+import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.proxy.ProxyServer;
-import com.velocitypowered.proxy.radar.diagnostics.RadarDiagnostics;
-import com.velocitypowered.proxy.radar.health.BackendHealthChecker;
-import com.velocitypowered.proxy.radar.health.FallbackRouter;
-import com.velocitypowered.proxy.radar.modded.ModdedHandshakeCache;
-import com.velocitypowered.proxy.radar.motd.MotdCache;
-import com.velocitypowered.proxy.radar.network.ConnectionThrottler;
-import com.velocitypowered.proxy.radar.security.BotFilter;
-import com.velocitypowered.proxy.radar.shutdown.GracefulShutdown;
+import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
+import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
+import com.velocitypowered.proxy.conduit.health.FallbackRouter;
+import com.velocitypowered.proxy.conduit.modded.ModdedHandshakeCache;
+import com.velocitypowered.proxy.conduit.motd.MotdCache;
+import com.velocitypowered.proxy.conduit.network.ConnectionThrottler;
+import com.velocitypowered.proxy.conduit.security.BotFilter;
+import com.velocitypowered.proxy.conduit.shutdown.GracefulShutdown;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
@@ -45,11 +46,11 @@ public final class Conduit {
   private static final Logger logger = LogManager.getLogger(Conduit.class);
   private static Conduit instance;
 
-  private final RadarConfig config;
+  private final ConduitConfig config;
   private final ModdedHandshakeCache handshakeCache;
   private final ConnectionThrottler connectionThrottler;
-  private final RadarDiagnostics diagnostics;
-  private final String radarVersion;
+  private final ConduitDiagnostics diagnostics;
+  private final String conduitVersion;
   private final BackendHealthChecker healthChecker;
   private FallbackRouter fallbackRouter;
   private final MotdCache motdCache;
@@ -57,17 +58,17 @@ public final class Conduit {
   private final BotFilter botFilter;
 
   private Conduit(Path configDir) {
-    this.radarVersion = loadVersion();
-    logger.info("[Conduit] Starting Conduit v{}", radarVersion);
+    this.conduitVersion = loadVersion();
+    logger.info("[Conduit] Starting Conduit v{}", conduitVersion);
 
-    this.config = RadarConfig.load(configDir);
+    this.config = ConduitConfig.load(configDir);
     this.handshakeCache = config.isHandshakeCacheEnabled()
         ? new ModdedHandshakeCache(config.getHandshakeCacheTtlSeconds())
         : ModdedHandshakeCache.NOOP;
     this.connectionThrottler = config.isConnectionThrottleEnabled()
         ? new ConnectionThrottler(config.getConnectionThrottleMaxPerSecond())
         : ConnectionThrottler.UNLIMITED;
-    this.diagnostics = new RadarDiagnostics(config);
+    this.diagnostics = new ConduitDiagnostics(config);
 
     this.healthChecker = config.isHealthCheckEnabled()
         ? new BackendHealthChecker(config.getHealthCheckIntervalMs())
@@ -114,10 +115,16 @@ public final class Conduit {
   public void start(ProxyServer proxy) {
     healthChecker.start(proxy);
 
-    this.fallbackRouter = new FallbackRouter(healthChecker, config.getFallbackServers(), proxy);
-    fallbackRouter.register(proxy);
+    Object plugin = proxy.getPluginManager()
+        .getPlugin("conduit")
+        .flatMap(PluginContainer::getInstance)
+        .orElseThrow(() -> new IllegalStateException(
+            "[Conduit] Could not find conduit plugin container for event registration"));
 
-    motdCache.register(proxy);
+    this.fallbackRouter = new FallbackRouter(healthChecker, config.getFallbackServers(), proxy);
+    fallbackRouter.register(plugin, proxy);
+
+    motdCache.register(plugin, proxy);
 
     if (gracefulShutdown != null) {
       gracefulShutdown.register(proxy);
@@ -129,15 +136,15 @@ public final class Conduit {
   /** Reloads conduit.toml and pushes new values into all live subsystems. */
   public void reload(Path configDir) {
     logger.info("[Conduit] Reloading configuration...");
-    RadarConfig newConfig = RadarConfig.load(configDir);
+    ConduitConfig newConfig = ConduitConfig.load(configDir);
     handshakeCache.setTtlSeconds(newConfig.getHandshakeCacheTtlSeconds());
     connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
     diagnostics.reconfigure(newConfig);
     logger.info("[Conduit] Reload complete.");
   }
 
-  /** Returns the loaded {@link RadarConfig}. */
-  public RadarConfig getConfig() {
+  /** Returns the loaded {@link ConduitConfig}. */
+  public ConduitConfig getConfig() {
     return config;
   }
 
@@ -151,8 +158,8 @@ public final class Conduit {
     return connectionThrottler;
   }
 
-  /** Returns the active {@link RadarDiagnostics}. */
-  public RadarDiagnostics getDiagnostics() {
+  /** Returns the active {@link ConduitDiagnostics}. */
+  public ConduitDiagnostics getDiagnostics() {
     return diagnostics;
   }
 
@@ -185,12 +192,12 @@ public final class Conduit {
   }
 
   /** Returns the Conduit build version string. */
-  public String getRadarVersion() {
-    return radarVersion;
+  public String getConduitVersion() {
+    return conduitVersion;
   }
 
   private void logStartupSummary() {
-    logger.info("[Conduit] v{} initialised:", radarVersion);
+    logger.info("[Conduit] v{} initialised:", conduitVersion);
     logger.info("[Conduit]   max-known-packs         = {}", config.getMaxKnownPacks());
     logger.info("[Conduit]   handshake-cache         = {} (TTL {}s)",
         config.isHandshakeCacheEnabled(), config.getHandshakeCacheTtlSeconds());
@@ -216,7 +223,7 @@ public final class Conduit {
 
   private static String loadVersion() {
     try (InputStream in = Conduit.class.getResourceAsStream(
-        "/com/velocitypowered/proxy/radar/radar-build.properties")) {
+        "/com/velocitypowered/proxy/conduit/conduit-build.properties")) {
       if (in != null) {
         Properties props = new Properties();
         props.load(in);

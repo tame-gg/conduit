@@ -15,10 +15,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package com.velocitypowered.proxy.radar.modded;
+package com.velocitypowered.proxy.conduit.modded;
 
 import com.velocitypowered.proxy.protocol.packet.PluginMessagePacket;
-import com.velocitypowered.proxy.radar.diagnostics.RadarDiagnostics;
+import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
 import java.nio.charset.StandardCharsets;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -73,7 +73,7 @@ public final class NeoForgeHandshakeUtil {
    * Returns {@code false} and logs a warning if the payload is suspiciously large.
    */
   public static boolean validatePayloadSize(PluginMessagePacket msg, String playerName,
-      RadarDiagnostics diagnostics) {
+      ConduitDiagnostics diagnostics) {
     int len = msg.content().readableBytes();
     if (len > MAX_HANDSHAKE_PAYLOAD_BYTES) {
       logger.warn("[Conduit] {} sent oversized mod-handshake payload on channel '{}': "

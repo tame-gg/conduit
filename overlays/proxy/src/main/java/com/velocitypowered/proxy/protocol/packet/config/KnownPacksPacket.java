@@ -21,13 +21,13 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.protocol.MinecraftPacket;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
-import com.velocitypowered.proxy.radar.RadarConfig;
+import com.velocitypowered.proxy.conduit.ConduitConfig;
 import com.velocitypowered.proxy.util.except.QuietDecoderException;
 import io.netty.buffer.ByteBuf;
 import java.util.List;
 
 /**
- * Conduit: {@code maxKnownPacks} is now driven by {@link RadarConfig} (conduit.toml) rather than
+ * Conduit: {@code maxKnownPacks} is now driven by {@link ConduitConfig} (conduit.toml) rather than
  * a JVM system property. The property {@code -Dvelocity.max-known-packs} is still honoured as a
  * higher-priority override. This eliminates the {@code sun.misc.Unsafe} reflection used by the
  * KnownPacksFix plugin and allows live-reload without a proxy restart.
@@ -36,7 +36,7 @@ public class KnownPacksPacket implements MinecraftPacket {
 
   // Vanilla Minecraft limit is 64.  Modded clients (NeoForge, Fabric with many mods) routinely
   // exceed this because each mod data-pack entry appears as a separate known pack.
-  // Conduit reads the configured limit from RadarConfig; a JVM property overrides both.
+  // Conduit reads the configured limit from ConduitConfig; a JVM property overrides both.
   static int maxKnownPacks = resolveLimit();
 
   private static final QuietDecoderException TOO_MANY_PACKS =
@@ -44,7 +44,7 @@ public class KnownPacksPacket implements MinecraftPacket {
 
   private List<KnownPack> packs;
 
-  // Called by RadarConfig whenever the config is reloaded so the limit takes effect immediately
+  // Called by ConduitConfig whenever the config is reloaded so the limit takes effect immediately
   // without a restart.
   public static void setMaxKnownPacks(int limit) {
     if (limit <= 0) {
@@ -63,9 +63,9 @@ public class KnownPacksPacket implements MinecraftPacket {
     if (sysProp > 0) {
       return sysProp;
     }
-    // RadarConfig is not yet initialised at class-load time, so we fall back to the radar default.
-    // Once RadarConfig loads it calls setMaxKnownPacks() with the real configured value.
-    return RadarConfig.DEFAULT_MAX_KNOWN_PACKS;
+    // ConduitConfig is not yet initialised at class-load time, so we fall back to the conduit default.
+    // Once ConduitConfig loads it calls setMaxKnownPacks() with the real configured value.
+    return ConduitConfig.DEFAULT_MAX_KNOWN_PACKS;
   }
 
   @Override

@@ -1,0 +1,92 @@
+# radar.toml — Conduit configuration
+# This file is separate from velocity.toml so upstream merges stay clean.
+# All settings here are optional; built-in defaults are listed as comments.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [modded] — Settings for modded Minecraft client/server compatibility
+# ─────────────────────────────────────────────────────────────────────────────
+[modded]
+
+# Maximum number of known data-packs a client may send during the configuration
+# phase.  Vanilla Velocity caps this at 64, which is too low for most modpacks.
+# Raise this to accommodate heavily modded clients (NeoForge, Fabric with many
+# data-pack mods, etc.).  Values above 10 000 may cause memory pressure.
+# Overridden at startup by -Dvelocity.max-known-packs=<n> if that JVM flag is set.
+max-known-packs = 1024
+
+# Cache the result of the mod-list negotiation per (client-IP, mod-fingerprint)
+# pair.  On a re-connect the cached handshake is replayed, skipping the round-
+# trip entirely and shaving 50–400 ms off the join time on modded servers.
+handshake-cache = true
+
+# How long (seconds) a cached handshake result stays valid.  Set to 0 to disable.
+handshake-cache-ttl = 300
+
+# How long (ms) to wait for a modded client to finish the handshake before
+# dropping the connection.  Increase for very large modpacks on slow links.
+handshake-timeout-ms = 30000
+
+# Enable extra compatibility shims for NeoForge FML3 clients.
+# Disabling this only makes sense if you run a purely vanilla / Fabric network.
+neoforge-compat = true
+
+# Enable compatibility handling for legacy Forge (FML1/FML2) clients.
+legacy-forge-compat = true
+
+# Include a [MODDED] tag in server list ping responses so launchers can filter.
+announce-modded-in-ping = false
+
+# Log the full mod list when a modded client connects (verbose; for debugging).
+log-mod-handshakes = false
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [network] — Low-level networking tuning
+# ─────────────────────────────────────────────────────────────────────────────
+[network]
+
+# Netty write-buffer watermarks (bytes).  The proxy pauses writes to a channel
+# when its buffer exceeds the high mark, and resumes at the low mark.  Higher
+# values smooth out bursty traffic at the cost of peak memory; lower values
+# reduce latency but may cause micro-stalls under heavy load.
+write-buffer-high-watermark = 2097152   # 2 MiB
+write-buffer-low-watermark  = 1048576   # 1 MiB
+
+# Skip compressing packets whose compressed size would not be meaningfully
+# smaller than the raw size.  The threshold is velocity.toml's
+# compression-threshold; this option adds a minimum byte-saving requirement.
+# Reduces CPU for near-incompressible payloads (encrypted, image, audio data).
+smart-compression = true
+
+# Minimum bytes saved before compression is applied.  Packets where
+# (uncompressed – compressed) < this value are sent raw instead.
+smart-compression-min-delta = 64
+
+# Batch outbound packets during server transitions to avoid N round-trips.
+# Significantly improves transfer speed on modded servers with large state.
+packet-queue-optimization = true
+
+# Maximum queued packets per player during a server switch.  Excess packets are
+# flushed immediately.  Tune down if memory pressure is observed during switches.
+packet-queue-max-depth = 256
+
+# Rate-limit new TCP connections to the proxy (helps under DDoS / bot floods).
+connection-throttle = true
+connection-throttle-max-per-second = 30
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [diagnostics] — Debug and observability options
+# ─────────────────────────────────────────────────────────────────────────────
+[diagnostics]
+
+# Emit structured timing logs for every player connection.
+# Useful for profiling but adds overhead; keep off in production.
+enabled = false
+
+# Log every packet exchanged during the mod handshake phase.
+# Implies enabled = true.  Very verbose — use only for debugging.
+trace-mod-handshakes = false
+
+# Log a warning when a player's initial login takes longer than this (ms).
+slow-connection-threshold-ms = 3000

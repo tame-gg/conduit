@@ -1,0 +1,161 @@
+/*
+ * Conduit — a performance-focused fork of Velocity for modded networks.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package com.velocitypowered.proxy.radar.network;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
+import java.util.zip.Deflater;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+/**
+ * Drop-in replacement for Velocity's compression layer that skips compression when the estimated
+ * savings would not exceed a configurable threshold.
+ *
+ * <p>Vanilla Velocity compresses every packet above the threshold regardless of whether the data
+ * is actually compressible (e.g., image data, already-compressed audio, encrypted payloads).
+ * SmartCompression adds a pre-flight byte-saving check using a fast heuristic: it samples the
+ * first 128 bytes of the payload to estimate the Shannon entropy.  If entropy is high (≥ 7.0 bits
+ * per byte) the payload is almost certainly already compressed or encrypted, and we skip deflation.
+ *
+ * <p>For payloads that pass the entropy check but still compress poorly (compressed size within
+ * {@code minDeltaBytes} of raw size) the raw payload is sent instead.
+ *
+ * <p>Thread-safety: each {@link SmartDeflater} is stateful and must not be shared across threads.
+ * Call {@link #createDeflater} once per pipeline.
+ */
+public final class SmartCompression {
+
+  private static final Logger logger = LogManager.getLogger(SmartCompression.class);
+
+  /** Entropy threshold above which we assume the data is already compressed or encrypted. */
+  private static final double HIGH_ENTROPY_CUTOFF = 6.8;
+
+  /** Bytes to sample for the entropy heuristic.  Must be ≤ the actual payload length. */
+  private static final int ENTROPY_SAMPLE_SIZE = 128;
+
+  private final int compressionThreshold;
+  private volatile int minDeltaBytes;
+
+  public SmartCompression(int compressionThreshold, int minDeltaBytes) {
+    this.compressionThreshold = compressionThreshold;
+    this.minDeltaBytes = minDeltaBytes;
+  }
+
+  public void setMinDeltaBytes(int minDeltaBytes) {
+    this.minDeltaBytes = minDeltaBytes;
+  }
+
+  /**
+   * Creates a thread-local deflater instance pre-configured with this compression context.
+   * The caller is responsible for calling {@link SmartDeflater#close()} when the pipeline closes.
+   */
+  public SmartDeflater createDeflater(int level) {
+    return new SmartDeflater(level, compressionThreshold, this);
+  }
+
+  /**
+   * Returns {@code true} if the packet payload at {@code buf[readerIndex..readerIndex+length]}
+   * looks compressible enough to warrant running DEFLATE on it.
+   */
+  static boolean isLikelyCompressible(ByteBuf buf, int length) {
+    if (length < ENTROPY_SAMPLE_SIZE) return true; // too short to estimate, just compress
+    int sampleLen = Math.min(length, ENTROPY_SAMPLE_SIZE);
+    int readerIndex = buf.readerIndex();
+
+    int[] freq = new int[256];
+    for (int i = 0; i < sampleLen; i++) {
+      freq[buf.getByte(readerIndex + i) & 0xFF]++;
+    }
+
+    double entropy = 0.0;
+    for (int count : freq) {
+      if (count == 0) continue;
+      double p = (double) count / sampleLen;
+      entropy -= p * (Math.log(p) / Math.log(2));
+    }
+    return entropy < HIGH_ENTROPY_CUTOFF;
+  }
+
+  // ── SmartDeflater ─────────────────────────────────────────────────────────
+
+  /**
+   * Stateful per-pipeline deflater.  Wraps {@link java.util.zip.Deflater} and adds the
+   * smart-skip logic from the enclosing {@link SmartCompression} context.
+   */
+  public static final class SmartDeflater implements AutoCloseable {
+
+    private final Deflater deflater;
+    private final int threshold;
+    private final SmartCompression ctx;
+
+    SmartDeflater(int level, int threshold, SmartCompression ctx) {
+      this.deflater = new Deflater(level == -1 ? Deflater.DEFAULT_COMPRESSION : level, true);
+      this.threshold = threshold;
+      this.ctx = ctx;
+    }
+
+    /**
+     * Attempts to deflate {@code in} into a new buffer.
+     *
+     * @return the compressed buffer (caller must release), or {@code null} if compression was
+     *         skipped (the caller must send the raw payload with an uncompressed-length header of 0)
+     */
+    public ByteBuf deflate(ByteBufAllocator alloc, ByteBuf in) {
+      int rawLen = in.readableBytes();
+
+      if (rawLen < threshold) return null; // below threshold — send raw per vanilla behaviour
+
+      if (!SmartCompression.isLikelyCompressible(in, rawLen)) {
+        logger.trace("[Conduit] SmartCompression: skipping high-entropy payload ({} bytes)", rawLen);
+        return null;
+      }
+
+      byte[] inputArray = new byte[rawLen];
+      in.getBytes(in.readerIndex(), inputArray);
+
+      deflater.reset();
+      deflater.setInput(inputArray);
+      deflater.finish();
+
+      // Allocate an output buffer slightly larger than the input.
+      ByteBuf out = alloc.heapBuffer(rawLen + 32);
+      try {
+        while (!deflater.finished()) {
+          int available = out.writableBytes();
+          if (available < 512) {
+            out.ensureWritable(rawLen);
+            available = out.writableBytes();
+          }
+          int produced = deflater.deflate(
+              out.array(),
+              out.arrayOffset() + out.writerIndex(),
+              available);
+          out.writerIndex(out.writerIndex() + produced);
+        }
+      } catch (Exception e) {
+        out.release();
+        throw e;
+      }
+
+      // Skip if savings do not meet the minimum delta.
+      int delta = rawLen - out.readableBytes();
+      if (delta < ctx.minDeltaBytes) {
+        logger.trace("[Conduit] SmartCompression: compressed {} → {} bytes (delta {}), skipping",
+            rawLen, out.readableBytes(), delta);
+        out.release();
+        return null;
+      }
+
+      return out;
+    }
+
+    @Override
+    public void close() {
+      deflater.end();
+    }
+  }
+}

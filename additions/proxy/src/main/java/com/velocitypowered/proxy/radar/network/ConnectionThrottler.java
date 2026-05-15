@@ -43,7 +43,7 @@ import org.apache.logging.log4j.Logger;
  *       hot packet path), so contention is acceptable.</li>
  * </ul>
  */
-public final class ConnectionThrottler {
+public class ConnectionThrottler {
 
   /** Returned when throttling is disabled.  All checks return {@code false} (not throttled). */
   public static final ConnectionThrottler UNLIMITED = new ConnectionThrottler(Integer.MAX_VALUE) {

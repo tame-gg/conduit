@@ -38,7 +38,7 @@ import org.apache.logging.log4j.Logger;
  * <p>The cache is bounded (max 2 048 entries) with LRU eviction and a configurable TTL.
  * Thread-safe via a read-write lock — reads on the hot path acquire only a read lock.
  */
-public final class ModdedHandshakeCache {
+public class ModdedHandshakeCache {
 
   /** A no-op instance returned when handshake caching is disabled in the config. */
   public static final ModdedHandshakeCache NOOP = new ModdedHandshakeCache(0) {

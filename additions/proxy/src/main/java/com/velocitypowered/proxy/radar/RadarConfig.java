@@ -25,6 +25,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Collections;
+import java.util.List;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -64,6 +66,19 @@ public final class RadarConfig {
   private final boolean traceModHandshakes;
   private final int slowConnectionThresholdMs;
 
+  // ── Server section ────────────────────────────────────────────────────────
+  private final boolean healthCheckEnabled;
+  private final int healthCheckIntervalMs;
+  private final List<String> fallbackServers;
+  private final boolean motdCacheEnabled;
+  private final int motdCacheTtlMs;
+  private final boolean gracefulShutdownEnabled;
+  private final int gracefulShutdownTimeoutMs;
+  private final String gracefulShutdownMessage;
+  private final boolean botFilterEnabled;
+  private final int botFilterTimeoutMs;
+  private final int botFilterThreshold;
+
   private RadarConfig(Builder b) {
     this.maxKnownPacks = b.maxKnownPacks;
     this.handshakeCacheEnabled = b.handshakeCacheEnabled;
@@ -86,6 +101,18 @@ public final class RadarConfig {
     this.diagnosticsEnabled = b.diagnosticsEnabled;
     this.traceModHandshakes = b.traceModHandshakes;
     this.slowConnectionThresholdMs = b.slowConnectionThresholdMs;
+
+    this.healthCheckEnabled = b.healthCheckEnabled;
+    this.healthCheckIntervalMs = b.healthCheckIntervalMs;
+    this.fallbackServers = b.fallbackServers;
+    this.motdCacheEnabled = b.motdCacheEnabled;
+    this.motdCacheTtlMs = b.motdCacheTtlMs;
+    this.gracefulShutdownEnabled = b.gracefulShutdownEnabled;
+    this.gracefulShutdownTimeoutMs = b.gracefulShutdownTimeoutMs;
+    this.gracefulShutdownMessage = b.gracefulShutdownMessage;
+    this.botFilterEnabled = b.botFilterEnabled;
+    this.botFilterTimeoutMs = b.botFilterTimeoutMs;
+    this.botFilterThreshold = b.botFilterThreshold;
   }
 
   /** Loads (or generates) {@code radar.toml} from the given directory, then pushes live values. */
@@ -136,6 +163,22 @@ public final class RadarConfig {
       b.diagnosticsEnabled = diag.getOrElse("enabled", false);
       b.traceModHandshakes = diag.getOrElse("trace-mod-handshakes", false);
       b.slowConnectionThresholdMs = diag.getIntOrElse("slow-connection-threshold-ms", 3000);
+    }
+
+    CommentedConfig server = toml.get("server");
+    if (server != null) {
+      b.healthCheckEnabled = server.getOrElse("health-check-enabled", true);
+      b.healthCheckIntervalMs = server.getIntOrElse("health-check-interval-ms", 10000);
+      b.fallbackServers = server.getOrElse("fallback-servers", Collections.emptyList());
+      b.motdCacheEnabled = server.getOrElse("motd-cache-enabled", true);
+      b.motdCacheTtlMs = server.getIntOrElse("motd-cache-ttl-ms", 2000);
+      b.gracefulShutdownEnabled = server.getOrElse("graceful-shutdown-enabled", true);
+      b.gracefulShutdownTimeoutMs = server.getIntOrElse("graceful-shutdown-timeout-ms", 5000);
+      b.gracefulShutdownMessage = server.getOrElse("graceful-shutdown-message",
+          "Proxy is restarting. Please reconnect in a moment.");
+      b.botFilterEnabled = server.getOrElse("bot-filter-enabled", true);
+      b.botFilterTimeoutMs = server.getIntOrElse("bot-filter-timeout-ms", 3000);
+      b.botFilterThreshold = server.getIntOrElse("bot-filter-threshold", 10);
     }
 
     return new RadarConfig(b);
@@ -268,6 +311,63 @@ public final class RadarConfig {
     return slowConnectionThresholdMs;
   }
 
+  // ── Server getters ────────────────────────────────────────────────────────
+
+  /** Returns whether backend health checking is enabled. */
+  public boolean isHealthCheckEnabled() {
+    return healthCheckEnabled;
+  }
+
+  /** Returns the interval in milliseconds between backend health-check rounds. */
+  public int getHealthCheckIntervalMs() {
+    return healthCheckIntervalMs;
+  }
+
+  /** Returns the ordered list of preferred fallback server names. */
+  public List<String> getFallbackServers() {
+    return fallbackServers;
+  }
+
+  /** Returns whether MOTD response caching is enabled. */
+  public boolean isMotdCacheEnabled() {
+    return motdCacheEnabled;
+  }
+
+  /** Returns the time-to-live in milliseconds for cached MOTD responses. */
+  public int getMotdCacheTtlMs() {
+    return motdCacheTtlMs;
+  }
+
+  /** Returns whether the graceful-shutdown hook is enabled. */
+  public boolean isGracefulShutdownEnabled() {
+    return gracefulShutdownEnabled;
+  }
+
+  /** Returns the maximum time in milliseconds to wait for graceful-shutdown transfers. */
+  public int getGracefulShutdownTimeoutMs() {
+    return gracefulShutdownTimeoutMs;
+  }
+
+  /** Returns the disconnect message shown to players when no fallback is available on shutdown. */
+  public String getGracefulShutdownMessage() {
+    return gracefulShutdownMessage;
+  }
+
+  /** Returns whether the incomplete-handshake bot filter is enabled. */
+  public boolean isBotFilterEnabled() {
+    return botFilterEnabled;
+  }
+
+  /** Returns the handshake completion timeout in milliseconds used by the bot filter. */
+  public int getBotFilterTimeoutMs() {
+    return botFilterTimeoutMs;
+  }
+
+  /** Returns the incomplete-handshake count threshold above which an IP is blocked. */
+  public int getBotFilterThreshold() {
+    return botFilterThreshold;
+  }
+
   // ── Builder ───────────────────────────────────────────────────────────────
 
   /** Mutable builder used internally by {@link #fromToml} to construct a {@link RadarConfig}. */
@@ -293,5 +393,17 @@ public final class RadarConfig {
     boolean diagnosticsEnabled = false;
     boolean traceModHandshakes = false;
     int slowConnectionThresholdMs = 3000;
+
+    boolean healthCheckEnabled = true;
+    int healthCheckIntervalMs = 10000;
+    List<String> fallbackServers = Collections.emptyList();
+    boolean motdCacheEnabled = true;
+    int motdCacheTtlMs = 2000;
+    boolean gracefulShutdownEnabled = true;
+    int gracefulShutdownTimeoutMs = 5000;
+    String gracefulShutdownMessage = "Proxy is restarting. Please reconnect in a moment.";
+    boolean botFilterEnabled = true;
+    int botFilterTimeoutMs = 3000;
+    int botFilterThreshold = 10;
   }
 }

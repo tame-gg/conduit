@@ -17,9 +17,15 @@
 
 package com.velocitypowered.proxy.radar;
 
+import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.proxy.radar.diagnostics.RadarDiagnostics;
+import com.velocitypowered.proxy.radar.health.BackendHealthChecker;
+import com.velocitypowered.proxy.radar.health.FallbackRouter;
 import com.velocitypowered.proxy.radar.modded.ModdedHandshakeCache;
+import com.velocitypowered.proxy.radar.motd.MotdCache;
 import com.velocitypowered.proxy.radar.network.ConnectionThrottler;
+import com.velocitypowered.proxy.radar.security.BotFilter;
+import com.velocitypowered.proxy.radar.shutdown.GracefulShutdown;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
@@ -44,6 +50,11 @@ public final class Conduit {
   private final ConnectionThrottler connectionThrottler;
   private final RadarDiagnostics diagnostics;
   private final String radarVersion;
+  private final BackendHealthChecker healthChecker;
+  private final FallbackRouter fallbackRouter;
+  private final MotdCache motdCache;
+  private final GracefulShutdown gracefulShutdown;
+  private final BotFilter botFilter;
 
   private Conduit(Path configDir) {
     this.radarVersion = loadVersion();
@@ -57,6 +68,22 @@ public final class Conduit {
         ? new ConnectionThrottler(config.getConnectionThrottleMaxPerSecond())
         : ConnectionThrottler.UNLIMITED;
     this.diagnostics = new RadarDiagnostics(config);
+
+    this.healthChecker = config.isHealthCheckEnabled()
+        ? new BackendHealthChecker(config.getHealthCheckIntervalMs())
+        : BackendHealthChecker.DISABLED;
+    this.fallbackRouter = FallbackRouter.create(healthChecker, config.getFallbackServers(), null);
+    this.motdCache = config.isMotdCacheEnabled()
+        ? new MotdCache(config.getMotdCacheTtlMs())
+        : MotdCache.DISABLED;
+    this.gracefulShutdown = config.isGracefulShutdownEnabled()
+        ? new GracefulShutdown(config.getGracefulShutdownTimeoutMs(),
+            config.getGracefulShutdownMessage(),
+            config.getFallbackServers().isEmpty() ? null : config.getFallbackServers().get(0))
+        : null;
+    this.botFilter = config.isBotFilterEnabled()
+        ? new BotFilter(config.getBotFilterTimeoutMs(), config.getBotFilterThreshold())
+        : BotFilter.DISABLED;
 
     logStartupSummary();
   }
@@ -76,6 +103,28 @@ public final class Conduit {
       throw new IllegalStateException("Conduit not yet initialised");
     }
     return instance;
+  }
+
+  /**
+   * Starts all subsystems that require a {@link ProxyServer} reference (event listeners, health
+   * checker, shutdown hook).  Must be called after the proxy has finished its own startup.
+   *
+   * @param proxy the fully-initialised proxy server
+   */
+  public void start(ProxyServer proxy) {
+    healthChecker.start(proxy);
+
+    FallbackRouter boundRouter = FallbackRouter.create(healthChecker,
+        config.getFallbackServers(), proxy);
+    boundRouter.register(proxy);
+
+    motdCache.register(proxy);
+
+    if (gracefulShutdown != null) {
+      gracefulShutdown.register(proxy);
+    }
+
+    logger.info("[Conduit] All subsystems started against proxy.");
   }
 
   /** Reloads radar.toml and pushes new values into all live subsystems. */
@@ -108,6 +157,34 @@ public final class Conduit {
     return diagnostics;
   }
 
+  /** Returns the active {@link BackendHealthChecker}. */
+  public BackendHealthChecker getHealthChecker() {
+    return healthChecker;
+  }
+
+  /** Returns the active {@link FallbackRouter}. */
+  public FallbackRouter getFallbackRouter() {
+    return fallbackRouter;
+  }
+
+  /** Returns the active {@link MotdCache}. */
+  public MotdCache getMotdCache() {
+    return motdCache;
+  }
+
+  /**
+   * Returns the active {@link GracefulShutdown} handler, or {@code null} if graceful shutdown is
+   * disabled.
+   */
+  public GracefulShutdown getGracefulShutdown() {
+    return gracefulShutdown;
+  }
+
+  /** Returns the active {@link BotFilter}. */
+  public BotFilter getBotFilter() {
+    return botFilter;
+  }
+
   /** Returns the Conduit build version string. */
   public String getRadarVersion() {
     return radarVersion;
@@ -126,6 +203,16 @@ public final class Conduit {
     logger.info("[Conduit]   connection-throttle     = {} ({}/s)",
         config.isConnectionThrottleEnabled(), config.getConnectionThrottleMaxPerSecond());
     logger.info("[Conduit]   diagnostics             = {}", config.isDiagnosticsEnabled());
+    logger.info("[Conduit]   health-check            = {} (interval {}ms)",
+        config.isHealthCheckEnabled(), config.getHealthCheckIntervalMs());
+    logger.info("[Conduit]   fallback-servers        = {}", config.getFallbackServers());
+    logger.info("[Conduit]   motd-cache              = {} (TTL {}ms)",
+        config.isMotdCacheEnabled(), config.getMotdCacheTtlMs());
+    logger.info("[Conduit]   graceful-shutdown        = {} (timeout {}ms)",
+        config.isGracefulShutdownEnabled(), config.getGracefulShutdownTimeoutMs());
+    logger.info("[Conduit]   bot-filter              = {} (timeout {}ms, threshold {})",
+        config.isBotFilterEnabled(), config.getBotFilterTimeoutMs(),
+        config.getBotFilterThreshold());
   }
 
   private static String loadVersion() {

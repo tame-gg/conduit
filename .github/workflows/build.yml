@@ -25,6 +25,11 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew build -x test
 
+      - name: Rename JAR
+        run: |
+          VERSION=$(grep "^conduit.version=" gradle.properties | cut -d= -f2)
+          mv proxy/build/libs/velocity-proxy-*-all.jar proxy/build/libs/conduit-${VERSION}.jar
+
       - name: Run tests
         run: ./gradlew test
 
@@ -32,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conduit-${{ github.sha }}
-          path: proxy/build/libs/velocity-proxy-*.jar
+          path: proxy/build/libs/conduit-*.jar
           retention-days: 30
 
       - name: Upload test results

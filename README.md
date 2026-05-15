@@ -16,13 +16,18 @@ Fabric, Forge, and NeoForge backends.
 | Feature | Description |
 |---------|-------------|
 | **Configurable known-packs limit** | Raises the max-known-packs cap via `conduit.toml`. Default 1 024 vs Velocity's 64 — no reflection hacks. Replaces the KnownPacksFix plugin. |
-| **Modded handshake cache** | Caches negotiated pack lists so returning modded clients skip the handshake round-trip (–50–400 ms join time). |
+| **Modded handshake cache** | Caches negotiated pack lists so returning modded clients skip the handshake round-trip. |
 | **NeoForge / Forge compat** | Better payload validation, channel detection, and address-marker stripping for FML1/FML2/FML3 clients. |
-| **Smart compression** | Entropy-based pre-flight check skips compressing already-compressed payloads (~17% less CPU on the compression thread under 200-player modded load). |
+| **Smart compression** | Entropy-based pre-flight check skips compressing already-compressed payloads. |
 | **Configurable write-buffer watermarks** | Tune Netty's backpressure per-deployment in `conduit.toml` instead of recompiling. |
 | **Increased SO_BACKLOG** | Raised from 128 → 1 024 to handle burst logins on large networks. |
 | **Per-IP connection throttle** | Drops TCP connections at the Netty accept stage before any data is read, protecting against bot floods. |
 | **Packet queue manager** | Holds in-flight packets during server switches, preventing state-machine confusion on modded clients. |
+| **Backend health checking** | Pings all registered backends on a configurable interval and marks unhealthy servers so they are skipped by fallback routing. |
+| **Fallback routing on kick** | Automatically redirects kicked players to a healthy fallback server instead of disconnecting them. |
+| **MOTD caching** | Caches server list pings per IP to reduce repeated ping overhead. |
+| **Graceful shutdown** | Transfers connected players to a fallback server (or disconnects with a friendly message) before the proxy exits. |
+| **Bot filter** | Blocks IPs that repeatedly open connections without completing the login handshake. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
 
 ---
@@ -34,14 +39,16 @@ Fabric, Forge, and NeoForge backends.
 Grab `conduit-<version>.jar` from the [releases page](https://github.com/koelss/conduit/releases/latest) and run it like any Velocity JAR:
 
 ```bash
-java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.0.0.jar
+java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.2.1.jar
 ```
 
 On first run, Conduit generates a `conduit.toml` file alongside `velocity.toml` with all settings annotated.
 
 ### Build from source
 
-**Prerequisites:** Java 21+, Git, bash ≥ 3.2
+**Prerequisites:** Java 21+, Git
+
+#### macOS / Linux
 
 ```bash
 git clone https://github.com/koelss/conduit.git
@@ -50,15 +57,33 @@ cd conduit
 ./gradlew build           # produces proxy/build/libs/conduit-<version>.jar
 ```
 
-> `setup.sh` caches the upstream clone in `.upstream-velocity/` so subsequent runs only fetch the delta.
+#### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/koelss/conduit.git
+cd conduit
+.\scripts\setup.ps1       # clones upstream Velocity and applies Conduit patches
+.\gradlew.bat build       # produces proxy\build\libs\conduit-<version>.jar
+```
+
+> The setup script caches the upstream clone in `.upstream-velocity/` so subsequent runs only fetch the delta.
 
 ### Update to latest upstream Velocity
+
+#### macOS / Linux
 
 ```bash
 ./scripts/sync-upstream.sh
 ```
 
-Fetches the latest `dev/3.0.0` commits, re-applies the patch set, and reports any files that may have conflicting changes.
+#### Windows
+
+```powershell
+# Fetch new upstream commits, then re-run setup
+git -C .upstream-velocity fetch origin dev/3.0.0
+git -C .upstream-velocity checkout FETCH_HEAD
+.\scripts\setup.ps1
+```
 
 ---
 
@@ -91,6 +116,19 @@ connection-throttle-max-per-second = 30
 enabled                      = false
 trace-mod-handshakes         = false    # very verbose — debug only
 slow-connection-threshold-ms = 3000
+
+[server]
+health-check-enabled            = true
+health-check-interval-ms        = 10000
+fallback-servers                = []        # ordered list of preferred fallback server names
+motd-cache-enabled              = true
+motd-cache-ttl-ms               = 2000
+graceful-shutdown-enabled       = true
+graceful-shutdown-timeout-ms    = 5000
+graceful-shutdown-message       = "Proxy is restarting. Please reconnect in a moment."
+bot-filter-enabled              = true
+bot-filter-timeout-ms           = 3000
+bot-filter-threshold            = 10
 ```
 
 ### Migrating from KnownPacksFix
@@ -111,13 +149,14 @@ The `-Dvelocity.max-known-packs=<n>` JVM flag is still honoured and overrides `c
 conduit/
 ├── overlays/             ← Files that REPLACE upstream Velocity files
 │   └── proxy/src/main/java/com/velocitypowered/proxy/
+│       ├── VelocityServer.java           Conduit.init() wiring, branding
 │       ├── network/ConnectionManager.java
 │       └── protocol/packet/config/KnownPacksPacket.java
 │
 ├── additions/            ← New files ADDED on top of upstream
-│   └── proxy/src/main/java/com/velocitypowered/proxy/radar/
+│   └── proxy/src/main/java/com/velocitypowered/proxy/conduit/
 │       ├── Conduit.java                  lifecycle manager
-│       ├── RadarConfig.java              conduit.toml reader
+│       ├── ConduitConfig.java            conduit.toml reader
 │       ├── modded/
 │       │   ├── ModdedHandshakeCache.java
 │       │   ├── ModdedClientTracker.java
@@ -126,17 +165,27 @@ conduit/
 │       │   ├── SmartCompression.java
 │       │   ├── PacketQueueManager.java
 │       │   └── ConnectionThrottler.java
+│       ├── health/
+│       │   ├── BackendHealthChecker.java
+│       │   └── FallbackRouter.java
+│       ├── motd/
+│       │   └── MotdCache.java
+│       ├── security/
+│       │   └── BotFilter.java
+│       ├── shutdown/
+│       │   └── GracefulShutdown.java
 │       └── diagnostics/
-│           └── RadarDiagnostics.java
+│           └── ConduitDiagnostics.java
 │
 ├── scripts/
-│   ├── setup.sh          ← initial setup + overlay application
-│   └── sync-upstream.sh  ← pull upstream changes
+│   ├── setup.sh          ← initial setup (macOS / Linux)
+│   ├── setup.ps1         ← initial setup (Windows)
+│   └── sync-upstream.sh  ← pull upstream changes (macOS / Linux)
 │
 └── gradle.properties     ← version numbers (conduit.version, upstream branch)
 ```
 
-`setup.sh` copies the full Velocity source into the working tree, then applies the overlays and additions on top. Only the files in `overlays/` and `additions/` are tracked by this repository; everything else is pulled from upstream at build time.
+The setup script copies the full Velocity source into the working tree, then applies the overlays and additions on top. Only the files in `overlays/` and `additions/` are tracked by this repository; everything else is pulled from upstream at build time.
 
 ---
 
@@ -144,15 +193,16 @@ conduit/
 
 ### Merging upstream changes
 
-Run `./scripts/sync-upstream.sh` periodically. If an upstream commit touches a file in `overlays/`, you will need to manually reconcile the delta. The script lists changed upstream files after each fetch.
+Run `./scripts/sync-upstream.sh` (or the manual PowerShell equivalent) periodically. If an upstream commit touches a file in `overlays/`, you will need to manually reconcile the delta. The script lists changed upstream files after each fetch.
 
-The overlay surface is intentionally minimal (two files) so merges stay straightforward.
+The overlay surface is intentionally small so merges stay straightforward.
 
 ### Adding new features
 
-1. Put new source files in `additions/proxy/src/main/java/…`.
+1. Put new source files in `additions/proxy/src/main/java/com/velocitypowered/proxy/conduit/…`.
 2. If you need to change an existing upstream file, copy it to the matching path under `overlays/` and apply your changes there.
-3. Run `./scripts/setup.sh` to re-apply everything and verify the build.
+3. Add the filename to the `--exclude` / `/XF` list in both `setup.sh` and `setup.ps1` so the upstream rsync does not overwrite it.
+4. Run the appropriate setup script to re-apply everything and verify the build.
 
 ---
 

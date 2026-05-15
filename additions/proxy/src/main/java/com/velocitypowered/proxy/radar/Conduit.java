@@ -51,7 +51,7 @@ public final class Conduit {
   private final RadarDiagnostics diagnostics;
   private final String radarVersion;
   private final BackendHealthChecker healthChecker;
-  private final FallbackRouter fallbackRouter;
+  private FallbackRouter fallbackRouter;
   private final MotdCache motdCache;
   private final GracefulShutdown gracefulShutdown;
   private final BotFilter botFilter;
@@ -72,7 +72,7 @@ public final class Conduit {
     this.healthChecker = config.isHealthCheckEnabled()
         ? new BackendHealthChecker(config.getHealthCheckIntervalMs())
         : BackendHealthChecker.DISABLED;
-    this.fallbackRouter = FallbackRouter.create(healthChecker, config.getFallbackServers(), null);
+    this.fallbackRouter = FallbackRouter.DISABLED;
     this.motdCache = config.isMotdCacheEnabled()
         ? new MotdCache(config.getMotdCacheTtlMs())
         : MotdCache.DISABLED;
@@ -114,9 +114,8 @@ public final class Conduit {
   public void start(ProxyServer proxy) {
     healthChecker.start(proxy);
 
-    FallbackRouter boundRouter = FallbackRouter.create(healthChecker,
-        config.getFallbackServers(), proxy);
-    boundRouter.register(proxy);
+    this.fallbackRouter = new FallbackRouter(healthChecker, config.getFallbackServers(), proxy);
+    fallbackRouter.register(proxy);
 
     motdCache.register(proxy);
 

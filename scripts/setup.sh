@@ -37,6 +37,7 @@ for module in api native proxy build-logic config; do
     rsync -a --delete \
       --exclude='**/KnownPacksPacket.java' \
       --exclude='**/ConnectionManager.java' \
+      --exclude='**/VelocityServer.java' \
       "$UPSTREAM_DIR/$module/" "$ROOT_DIR/$module/"
   fi
 done

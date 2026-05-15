@@ -33,6 +33,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  */
 public final class ModdedClientTracker {
 
+  /** Identifies the mod loader (or lack thereof) a client is using. */
   public enum ClientModType {
     VANILLA,
     FABRIC,
@@ -41,6 +42,7 @@ public final class ModdedClientTracker {
     UNKNOWN_MODDED   // has mod channels but didn't match a known loader
   }
 
+  /** Immutable snapshot of a player's detected mod state after handshake completion. */
   public record PlayerModState(
       UUID playerId,
       ClientModType modType,
@@ -101,14 +103,24 @@ public final class ModdedClientTracker {
     boolean hasModChannels = false;
 
     for (String ch : channels) {
-      if (ch.startsWith("neoforge:")) hasNeoForge = true;
-      else if (ch.startsWith("fml:"))   hasFml = true;
-      else if (ch.contains(":"))        hasModChannels = true;
+      if (ch.startsWith("neoforge:")) {
+        hasNeoForge = true;
+      } else if (ch.startsWith("fml:")) {
+        hasFml = true;
+      } else if (ch.contains(":")) {
+        hasModChannels = true;
+      }
     }
 
-    if (hasNeoForge) return ClientModType.NEOFORGE;
-    if (hasFml || hadFmlAddress) return ClientModType.LEGACY_FORGE;
-    if (hasModChannels) return ClientModType.UNKNOWN_MODDED;
+    if (hasNeoForge) {
+      return ClientModType.NEOFORGE;
+    }
+    if (hasFml || hadFmlAddress) {
+      return ClientModType.LEGACY_FORGE;
+    }
+    if (hasModChannels) {
+      return ClientModType.UNKNOWN_MODDED;
+    }
     return ClientModType.VANILLA;
   }
 }

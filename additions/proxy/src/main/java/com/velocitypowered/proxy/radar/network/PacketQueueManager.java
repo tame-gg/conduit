@@ -37,7 +37,8 @@ import org.apache.logging.log4j.Logger;
  *   <li>Complete server B's login/config phases</li>
  * </ol>
  *
- * During step 2–3, server A may still be sending play packets (chunk updates, entity moves, etc.)
+ * <p>During step 2–3, server A may still be sending play packets (chunk updates, entity moves,
+ * etc.)
  * that are no longer relevant.  Without queuing, these packets are either forwarded to the client
  * and confuse its state machine, or dropped, causing protocol errors.
  *
@@ -59,10 +60,16 @@ public final class PacketQueueManager {
   private volatile int maxDepth;
   private final ConcurrentHashMap<UUID, PlayerQueue> queues = new ConcurrentHashMap<>();
 
+  /**
+   * Constructs a manager with the given default queue depth cap.
+   *
+   * @param maxDepth maximum packets buffered per player before oldest are dropped
+   */
   public PacketQueueManager(int maxDepth) {
     this.maxDepth = maxDepth;
   }
 
+  /** Updates the maximum queue depth; applied to newly opened queues only. */
   public void setMaxDepth(int maxDepth) {
     this.maxDepth = maxDepth;
   }
@@ -85,7 +92,9 @@ public final class PacketQueueManager {
    */
   public boolean enqueue(UUID playerId, ByteBuf packet) {
     PlayerQueue q = queues.get(playerId);
-    if (q == null) return false;
+    if (q == null) {
+      return false;
+    }
     q.add(packet.retainedDuplicate());
     return true;
   }
@@ -96,7 +105,9 @@ public final class PacketQueueManager {
    */
   public void flushTo(UUID playerId, Channel channel) {
     PlayerQueue q = queues.remove(playerId);
-    if (q == null) return;
+    if (q == null) {
+      return;
+    }
     int flushed = 0;
     ByteBuf buf;
     while ((buf = q.poll()) != null) {
@@ -115,7 +126,9 @@ public final class PacketQueueManager {
    */
   public void discard(UUID playerId) {
     PlayerQueue q = queues.remove(playerId);
-    if (q == null) return;
+    if (q == null) {
+      return;
+    }
     int dropped = 0;
     ByteBuf buf;
     while ((buf = q.poll()) != null) {

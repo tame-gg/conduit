@@ -88,11 +88,30 @@ public final class Conduit {
     logger.info("[Conduit] Reload complete.");
   }
 
-  public RadarConfig getConfig()                   { return config; }
-  public ModdedHandshakeCache getHandshakeCache()  { return handshakeCache; }
-  public ConnectionThrottler getThrottler()        { return connectionThrottler; }
-  public RadarDiagnostics getDiagnostics()         { return diagnostics; }
-  public String getRadarVersion()                  { return radarVersion; }
+  /** Returns the loaded {@link RadarConfig}. */
+  public RadarConfig getConfig() {
+    return config;
+  }
+
+  /** Returns the active {@link ModdedHandshakeCache}. */
+  public ModdedHandshakeCache getHandshakeCache() {
+    return handshakeCache;
+  }
+
+  /** Returns the active {@link ConnectionThrottler}. */
+  public ConnectionThrottler getThrottler() {
+    return connectionThrottler;
+  }
+
+  /** Returns the active {@link RadarDiagnostics}. */
+  public RadarDiagnostics getDiagnostics() {
+    return diagnostics;
+  }
+
+  /** Returns the Conduit build version string. */
+  public String getRadarVersion() {
+    return radarVersion;
+  }
 
   private void logStartupSummary() {
     logger.info("[Conduit] v{} initialised:", radarVersion);
@@ -118,6 +137,7 @@ public final class Conduit {
         return props.getProperty("conduit.version", "unknown");
       }
     } catch (IOException ignored) {
+      // ignored
     }
     return "dev";
   }

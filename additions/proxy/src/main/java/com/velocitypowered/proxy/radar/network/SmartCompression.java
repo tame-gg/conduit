@@ -52,11 +52,18 @@ public final class SmartCompression {
   private final int compressionThreshold;
   private volatile int minDeltaBytes;
 
+  /**
+   * Constructs a {@code SmartCompression} context.
+   *
+   * @param compressionThreshold minimum raw packet size (in bytes) before compression is attempted
+   * @param minDeltaBytes        minimum byte savings required to actually send the compressed form
+   */
   public SmartCompression(int compressionThreshold, int minDeltaBytes) {
     this.compressionThreshold = compressionThreshold;
     this.minDeltaBytes = minDeltaBytes;
   }
 
+  /** Updates the minimum compression savings threshold. */
   public void setMinDeltaBytes(int minDeltaBytes) {
     this.minDeltaBytes = minDeltaBytes;
   }
@@ -74,7 +81,9 @@ public final class SmartCompression {
    * looks compressible enough to warrant running DEFLATE on it.
    */
   static boolean isLikelyCompressible(ByteBuf buf, int length) {
-    if (length < ENTROPY_SAMPLE_SIZE) return true; // too short to estimate, just compress
+    if (length < ENTROPY_SAMPLE_SIZE) {
+      return true; // too short to estimate, just compress
+    }
     int sampleLen = Math.min(length, ENTROPY_SAMPLE_SIZE);
     int readerIndex = buf.readerIndex();
 
@@ -85,7 +94,9 @@ public final class SmartCompression {
 
     double entropy = 0.0;
     for (int count : freq) {
-      if (count == 0) continue;
+      if (count == 0) {
+        continue;
+      }
       double p = (double) count / sampleLen;
       entropy -= p * (Math.log(p) / Math.log(2));
     }
@@ -119,7 +130,9 @@ public final class SmartCompression {
     public ByteBuf deflate(ByteBufAllocator alloc, ByteBuf in) {
       int rawLen = in.readableBytes();
 
-      if (rawLen < threshold) return null; // below threshold — send raw per vanilla behaviour
+      if (rawLen < threshold) {
+        return null; // below threshold — send raw per vanilla behaviour
+      }
 
       if (!SmartCompression.isLikelyCompressible(in, rawLen)) {
         logger.trace("[Conduit] SmartCompression: skipping high-entropy payload ({} bytes)", rawLen);

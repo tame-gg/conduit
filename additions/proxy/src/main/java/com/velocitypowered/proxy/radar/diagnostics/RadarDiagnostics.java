@@ -59,6 +59,7 @@ public final class RadarDiagnostics {
     reconfigure(config);
   }
 
+  /** Updates configuration fields from a freshly loaded {@link RadarConfig}. */
   public void reconfigure(RadarConfig config) {
     this.enabled = config.isDiagnosticsEnabled();
     this.traceModHandshakes = config.isTraceModHandshakes();
@@ -67,11 +68,15 @@ public final class RadarDiagnostics {
 
   // ── Event recording ────────────────────────────────────────────────────────
 
+  /** Records a new connection attempt from the named player. */
   public void recordConnection(String playerName) {
     totalConnections.increment();
-    if (enabled) loginTimings.put(playerName, System.currentTimeMillis());
+    if (enabled) {
+      loginTimings.put(playerName, System.currentTimeMillis());
+    }
   }
 
+  /** Records that the named player connected using the given mod type. */
   public void recordModdedConnection(String playerName, String modType) {
     modddedConnections.increment();
     if (enabled) {
@@ -79,10 +84,15 @@ public final class RadarDiagnostics {
     }
   }
 
+  /** Records that the named player completed login, and logs slow-login warnings. */
   public void recordLoginComplete(String playerName) {
-    if (!enabled) return;
+    if (!enabled) {
+      return;
+    }
     Long start = loginTimings.remove(playerName);
-    if (start == null) return;
+    if (start == null) {
+      return;
+    }
     long elapsed = System.currentTimeMillis() - start;
     if (elapsed > slowThresholdMs) {
       slowLogins.increment();
@@ -93,6 +103,7 @@ public final class RadarDiagnostics {
     }
   }
 
+  /** Records a handshake-cache hit for the named player. */
   public void recordHandshakeCacheHit(String playerName) {
     handshakeCacheHits.increment();
     if (traceModHandshakes) {
@@ -100,6 +111,7 @@ public final class RadarDiagnostics {
     }
   }
 
+  /** Records a handshake-cache miss for the named player. */
   public void recordHandshakeCacheMiss(String playerName) {
     handshakeCacheMisses.increment();
     if (traceModHandshakes) {
@@ -107,18 +119,22 @@ public final class RadarDiagnostics {
     }
   }
 
+  /** Records a connection that was dropped by the throttler. */
   public void recordThrottledConnection(String address) {
     throttledConnections.increment();
   }
 
+  /** Records an oversized plugin-message payload from the named player on the given channel. */
   public void recordOversizedPayload(String playerName, String channel, int bytes) {
     oversizedPayloads.increment();
   }
 
+  /** Records that smart compression chose to skip compressing a packet. */
   public void recordCompressionSkip() {
     compressionSkips.increment();
   }
 
+  /** Records that the packet queue was flushed for the named player. */
   public void recordPacketQueueFlush(String playerName, int packetCount) {
     packetQueueFlushes.increment();
     if (enabled) {
@@ -126,6 +142,7 @@ public final class RadarDiagnostics {
     }
   }
 
+  /** Traces a mod plugin-message packet for diagnostic purposes. */
   public void traceModPacket(String playerName, String channel, String direction, int bytes) {
     if (traceModHandshakes) {
       logger.info("[Conduit] MOD-TRACE {} {} ch='{}' {} bytes",
@@ -135,6 +152,7 @@ public final class RadarDiagnostics {
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
 
+  /** Returns a formatted multi-line string with a snapshot of all diagnostic counters. */
   public String buildSummary() {
     return String.format(
         "Conduit Diagnostics Snapshot%n"
@@ -160,11 +178,39 @@ public final class RadarDiagnostics {
   }
 
   // ── Getters for tests ─────────────────────────────────────────────────────
-  public long getTotalConnections()     { return totalConnections.sum(); }
-  public long getModdedConnections()    { return modddedConnections.sum(); }
-  public long getHandshakeCacheHits()   { return handshakeCacheHits.sum(); }
-  public long getHandshakeCacheMisses() { return handshakeCacheMisses.sum(); }
-  public long getThrottledConnections() { return throttledConnections.sum(); }
-  public long getSlowLogins()           { return slowLogins.sum(); }
-  public long getCompressionSkips()     { return compressionSkips.sum(); }
+
+  /** Returns the total number of connections recorded. */
+  public long getTotalConnections() {
+    return totalConnections.sum();
+  }
+
+  /** Returns the total number of modded connections recorded. */
+  public long getModdedConnections() {
+    return modddedConnections.sum();
+  }
+
+  /** Returns the total number of handshake-cache hits. */
+  public long getHandshakeCacheHits() {
+    return handshakeCacheHits.sum();
+  }
+
+  /** Returns the total number of handshake-cache misses. */
+  public long getHandshakeCacheMisses() {
+    return handshakeCacheMisses.sum();
+  }
+
+  /** Returns the total number of throttled connections. */
+  public long getThrottledConnections() {
+    return throttledConnections.sum();
+  }
+
+  /** Returns the total number of slow-login events. */
+  public long getSlowLogins() {
+    return slowLogins.sum();
+  }
+
+  /** Returns the total number of times compression was skipped. */
+  public long getCompressionSkips() {
+    return compressionSkips.sum();
+  }
 }

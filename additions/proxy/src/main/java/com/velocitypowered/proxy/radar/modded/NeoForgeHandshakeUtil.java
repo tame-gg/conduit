@@ -129,7 +129,9 @@ public final class NeoForgeHandshakeUtil {
    * Strips the FML1 marker from an address string so it can be parsed as a normal host.
    */
   public static String stripLegacyForgeMarker(String address) {
-    if (address == null) return null;
+    if (address == null) {
+      return null;
+    }
     int idx = address.indexOf('\0');
     return idx >= 0 ? address.substring(0, idx) : address;
   }

@@ -42,10 +42,21 @@ public class ModdedHandshakeCache {
 
   /** A no-op instance returned when handshake caching is disabled in the config. */
   public static final ModdedHandshakeCache NOOP = new ModdedHandshakeCache(0) {
-    @Override public CacheEntry get(InetAddress addr, List<String> mods)  { return null; }
-    @Override public void put(InetAddress addr, List<String> mods, CacheEntry entry) {}
-    @Override public void invalidate(InetAddress addr) {}
-    @Override public int size() { return 0; }
+    @Override
+    public CacheEntry get(InetAddress addr, List<String> mods) {
+      return null;
+    }
+
+    @Override
+    public void put(InetAddress addr, List<String> mods, CacheEntry entry) {}
+
+    @Override
+    public void invalidate(InetAddress addr) {}
+
+    @Override
+    public int size() {
+      return 0;
+    }
   };
 
   private static final Logger logger = LogManager.getLogger(ModdedHandshakeCache.class);
@@ -63,6 +74,11 @@ public class ModdedHandshakeCache {
         }
       };
 
+  /**
+   * Constructs a new cache with the given TTL.
+   *
+   * @param ttlSeconds how long entries remain valid; {@code <= 0} disables caching
+   */
   public ModdedHandshakeCache(int ttlSeconds) {
     this.ttlSeconds = ttlSeconds;
   }
@@ -73,15 +89,21 @@ public class ModdedHandshakeCache {
    * @return the cached entry, or {@code null} if absent or expired
    */
   public CacheEntry get(InetAddress addr, List<String> mods) {
-    if (ttlSeconds <= 0) return null;
+    if (ttlSeconds <= 0) {
+      return null;
+    }
     CacheKey key = new CacheKey(addr, mods);
     long now = System.currentTimeMillis();
 
     lock.readLock().lock();
     try {
       TimedEntry te = cache.get(key);
-      if (te == null) return null;
-      if (now - te.storedAt > (long) ttlSeconds * 1000) return null;
+      if (te == null) {
+        return null;
+      }
+      if (now - te.storedAt > (long) ttlSeconds * 1000) {
+        return null;
+      }
       return te.entry;
     } finally {
       lock.readLock().unlock();
@@ -90,7 +112,9 @@ public class ModdedHandshakeCache {
 
   /** Stores a negotiation result. Expired entries are pruned lazily on write. */
   public void put(InetAddress addr, List<String> mods, CacheEntry entry) {
-    if (ttlSeconds <= 0) return;
+    if (ttlSeconds <= 0) {
+      return;
+    }
     CacheKey key = new CacheKey(addr, mods);
     TimedEntry te = new TimedEntry(entry, System.currentTimeMillis());
 
@@ -113,28 +137,45 @@ public class ModdedHandshakeCache {
     }
   }
 
+  /** Returns the number of entries currently held in the cache. */
   public int size() {
     lock.readLock().lock();
-    try { return cache.size(); }
-    finally { lock.readLock().unlock(); }
+    try {
+      return cache.size();
+    } finally {
+      lock.readLock().unlock();
+    }
   }
 
+  /**
+   * Updates the TTL.  If the new TTL is zero or negative, the cache is cleared immediately.
+   *
+   * @param ttlSeconds the new TTL in seconds; {@code <= 0} disables caching
+   */
   public void setTtlSeconds(int ttlSeconds) {
     this.ttlSeconds = ttlSeconds;
     if (ttlSeconds <= 0) {
       lock.writeLock().lock();
-      try { cache.clear(); }
-      finally { lock.writeLock().unlock(); }
+      try {
+        cache.clear();
+      } finally {
+        lock.writeLock().unlock();
+      }
     }
   }
 
   private void pruneExpired() {
-    if (ttlSeconds <= 0) return;
+    if (ttlSeconds <= 0) {
+      return;
+    }
     long cutoff = System.currentTimeMillis() - (long) ttlSeconds * 1000;
     Iterator<Map.Entry<CacheKey, TimedEntry>> it = cache.entrySet().iterator();
     int removed = 0;
     while (it.hasNext()) {
-      if (it.next().getValue().storedAt < cutoff) { it.remove(); removed++; }
+      if (it.next().getValue().storedAt < cutoff) {
+        it.remove();
+        removed++;
+      }
     }
     if (removed > 0) {
       logger.debug("[Conduit] ModdedHandshakeCache pruned {} expired entries", removed);
@@ -164,8 +205,12 @@ public class ModdedHandshakeCache {
 
     @Override
     public boolean equals(Object o) {
-      if (this == o) return true;
-      if (!(o instanceof CacheKey c)) return false;
+      if (this == o) {
+        return true;
+      }
+      if (!(o instanceof CacheKey c)) {
+        return false;
+      }
       return Objects.equals(address, c.address) && Objects.equals(fingerprint, c.fingerprint);
     }
 

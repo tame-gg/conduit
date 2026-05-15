@@ -127,7 +127,8 @@ public final class RadarConfig {
       b.packetQueueOptEnabled = network.getOrElse("packet-queue-optimization", true);
       b.packetQueueMaxDepth = network.getIntOrElse("packet-queue-max-depth", 256);
       b.connectionThrottleEnabled = network.getOrElse("connection-throttle", true);
-      b.connectionThrottleMaxPerSecond = network.getIntOrElse("connection-throttle-max-per-second", 30);
+      b.connectionThrottleMaxPerSecond = network.getIntOrElse(
+          "connection-throttle-max-per-second", 30);
     }
 
     CommentedConfig diag = toml.get("diagnostics");
@@ -153,7 +154,8 @@ public final class RadarConfig {
   }
 
   private static void extractDefault(Path dest) {
-    try (InputStream in = RadarConfig.class.getResourceAsStream("/com/velocitypowered/proxy/radar/radar.toml")) {
+    try (InputStream in = RadarConfig.class.getResourceAsStream(
+        "/com/velocitypowered/proxy/radar/radar.toml")) {
       if (in == null) {
         logger.error("[Conduit] Default radar.toml not found in jar — using built-in defaults.");
         return;
@@ -166,31 +168,109 @@ public final class RadarConfig {
   }
 
   // ── Modded getters ────────────────────────────────────────────────────────
-  public int getMaxKnownPacks()            { return maxKnownPacks; }
-  public boolean isHandshakeCacheEnabled() { return handshakeCacheEnabled; }
-  public int getHandshakeCacheTtlSeconds() { return handshakeCacheTtlSeconds; }
-  public int getModdedHandshakeTimeoutMs() { return moddedHandshakeTimeoutMs; }
-  public boolean isNeoforgeCompatMode()    { return neoforgeCompatMode; }
-  public boolean isLegacyForgeCompatMode() { return legacyForgeCompatMode; }
-  public boolean isAnnounceModdedInPing()  { return announceModdedInPing; }
-  public boolean isLogModHandshakes()      { return logModHandshakes; }
+
+  /** Returns the maximum number of known packs the proxy will negotiate. */
+  public int getMaxKnownPacks() {
+    return maxKnownPacks;
+  }
+
+  /** Returns whether handshake caching is enabled. */
+  public boolean isHandshakeCacheEnabled() {
+    return handshakeCacheEnabled;
+  }
+
+  /** Returns the TTL in seconds for handshake cache entries. */
+  public int getHandshakeCacheTtlSeconds() {
+    return handshakeCacheTtlSeconds;
+  }
+
+  /** Returns the timeout in milliseconds for modded handshakes. */
+  public int getModdedHandshakeTimeoutMs() {
+    return moddedHandshakeTimeoutMs;
+  }
+
+  /** Returns whether NeoForge compatibility mode is active. */
+  public boolean isNeoforgeCompatMode() {
+    return neoforgeCompatMode;
+  }
+
+  /** Returns whether Legacy Forge (FML1/FML2) compatibility mode is active. */
+  public boolean isLegacyForgeCompatMode() {
+    return legacyForgeCompatMode;
+  }
+
+  /** Returns whether modded status is advertised in the server list ping. */
+  public boolean isAnnounceModdedInPing() {
+    return announceModdedInPing;
+  }
+
+  /** Returns whether mod handshake packets are logged. */
+  public boolean isLogModHandshakes() {
+    return logModHandshakes;
+  }
 
   // ── Network getters ───────────────────────────────────────────────────────
-  public int getWriteBufferHighWatermark()    { return writeBufferHighWatermark; }
-  public int getWriteBufferLowWatermark()     { return writeBufferLowWatermark; }
-  public boolean isSmartCompressionEnabled()  { return smartCompressionEnabled; }
-  public int getSmartCompressionMinSizeDelta(){ return smartCompressionMinSizeDelta; }
-  public boolean isPacketQueueOptEnabled()    { return packetQueueOptEnabled; }
-  public int getPacketQueueMaxDepth()         { return packetQueueMaxDepth; }
-  public boolean isConnectionThrottleEnabled(){ return connectionThrottleEnabled; }
-  public int getConnectionThrottleMaxPerSecond() { return connectionThrottleMaxPerSecond; }
+
+  /** Returns the Netty write-buffer high watermark in bytes. */
+  public int getWriteBufferHighWatermark() {
+    return writeBufferHighWatermark;
+  }
+
+  /** Returns the Netty write-buffer low watermark in bytes. */
+  public int getWriteBufferLowWatermark() {
+    return writeBufferLowWatermark;
+  }
+
+  /** Returns whether smart compression is enabled. */
+  public boolean isSmartCompressionEnabled() {
+    return smartCompressionEnabled;
+  }
+
+  /** Returns the minimum byte-saving delta required to use compression. */
+  public int getSmartCompressionMinSizeDelta() {
+    return smartCompressionMinSizeDelta;
+  }
+
+  /** Returns whether packet-queue optimisation is enabled. */
+  public boolean isPacketQueueOptEnabled() {
+    return packetQueueOptEnabled;
+  }
+
+  /** Returns the maximum number of packets that may be queued per player. */
+  public int getPacketQueueMaxDepth() {
+    return packetQueueMaxDepth;
+  }
+
+  /** Returns whether per-IP connection throttling is enabled. */
+  public boolean isConnectionThrottleEnabled() {
+    return connectionThrottleEnabled;
+  }
+
+  /** Returns the maximum number of connections per IP per second. */
+  public int getConnectionThrottleMaxPerSecond() {
+    return connectionThrottleMaxPerSecond;
+  }
 
   // ── Diagnostics getters ───────────────────────────────────────────────────
-  public boolean isDiagnosticsEnabled()     { return diagnosticsEnabled; }
-  public boolean isTraceModHandshakes()     { return traceModHandshakes; }
-  public int getSlowConnectionThresholdMs() { return slowConnectionThresholdMs; }
+
+  /** Returns whether runtime diagnostics are enabled. */
+  public boolean isDiagnosticsEnabled() {
+    return diagnosticsEnabled;
+  }
+
+  /** Returns whether per-packet mod-handshake tracing is enabled. */
+  public boolean isTraceModHandshakes() {
+    return traceModHandshakes;
+  }
+
+  /** Returns the login duration threshold in milliseconds above which a warning is emitted. */
+  public int getSlowConnectionThresholdMs() {
+    return slowConnectionThresholdMs;
+  }
 
   // ── Builder ───────────────────────────────────────────────────────────────
+
+  /** Mutable builder used internally by {@link #fromToml} to construct a {@link RadarConfig}. */
   private static final class Builder {
     int maxKnownPacks = DEFAULT_MAX_KNOWN_PACKS;
     boolean handshakeCacheEnabled = true;

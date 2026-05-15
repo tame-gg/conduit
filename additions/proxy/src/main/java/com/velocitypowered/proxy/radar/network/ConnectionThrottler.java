@@ -47,7 +47,10 @@ public class ConnectionThrottler {
 
   /** Returned when throttling is disabled.  All checks return {@code false} (not throttled). */
   public static final ConnectionThrottler UNLIMITED = new ConnectionThrottler(Integer.MAX_VALUE) {
-    @Override public boolean isThrottled(InetAddress addr) { return false; }
+    @Override
+    public boolean isThrottled(InetAddress addr) {
+      return false;
+    }
   };
 
   private static final Logger logger = LogManager.getLogger(ConnectionThrottler.class);
@@ -58,11 +61,17 @@ public class ConnectionThrottler {
 
   private final LinkedHashMap<InetAddress, IpWindow> windows =
       new LinkedHashMap<>(64, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<InetAddress, IpWindow> eldest) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<InetAddress, IpWindow> eldest) {
           return size() > MAX_TRACKED_IPS;
         }
       };
 
+  /**
+   * Constructs a throttler that allows at most {@code maxPerSecond} new connections per IP.
+   *
+   * @param maxPerSecond the maximum connection rate per IP per second
+   */
   public ConnectionThrottler(int maxPerSecond) {
     this.maxPerSecond = maxPerSecond;
   }
@@ -89,6 +98,7 @@ public class ConnectionThrottler {
     }
   }
 
+  /** Updates the maximum connections per second per IP. */
   public void setMaxPerSecond(int maxPerSecond) {
     this.maxPerSecond = maxPerSecond;
   }
@@ -96,15 +106,21 @@ public class ConnectionThrottler {
   /** Returns the number of IPs currently tracked (for diagnostics). */
   public int trackedIpCount() {
     lock.lock();
-    try { return windows.size(); }
-    finally { lock.unlock(); }
+    try {
+      return windows.size();
+    } finally {
+      lock.unlock();
+    }
   }
 
   /** Clears all tracking state (e.g., after a config reload). */
   public void reset() {
     lock.lock();
-    try { windows.clear(); }
-    finally { lock.unlock(); }
+    try {
+      windows.clear();
+    } finally {
+      lock.unlock();
+    }
   }
 
   // ── Inner types ────────────────────────────────────────────────────────────

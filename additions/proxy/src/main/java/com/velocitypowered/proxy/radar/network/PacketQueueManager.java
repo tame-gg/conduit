@@ -167,7 +167,9 @@ public final class PacketQueueManager {
       if (deque.size() >= cap) {
         // Drop the oldest packet (it is the most stale)
         ByteBuf dropped = deque.pollFirst();
-        if (dropped != null) dropped.release();
+        if (dropped != null) {
+          dropped.release();
+        }
       }
       deque.addLast(buf);
     }

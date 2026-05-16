@@ -19,13 +19,19 @@ package com.velocitypowered.proxy.conduit;
 
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.proxy.conduit.command.ConduitCommand;
+import com.velocitypowered.proxy.conduit.command.ModListCommand;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
 import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
 import com.velocitypowered.proxy.conduit.health.FallbackRouter;
+import com.velocitypowered.proxy.conduit.modded.ModTrackerListener;
+import com.velocitypowered.proxy.conduit.modded.ModdedClientTracker;
 import com.velocitypowered.proxy.conduit.modded.ModdedHandshakeCache;
 import com.velocitypowered.proxy.conduit.motd.MotdCache;
 import com.velocitypowered.proxy.conduit.network.ConnectionThrottler;
+import com.velocitypowered.proxy.conduit.network.TabCompleteCache;
 import com.velocitypowered.proxy.conduit.security.BotFilter;
+import com.velocitypowered.proxy.conduit.security.ChannelGuard;
 import com.velocitypowered.proxy.conduit.shutdown.GracefulShutdown;
 import java.io.IOException;
 import java.io.InputStream;
@@ -46,6 +52,7 @@ public final class Conduit {
   private static final Logger logger = LogManager.getLogger(Conduit.class);
   private static volatile Conduit instance;
 
+  private final Path configDir;
   private final ConduitConfig config;
   private final ModdedHandshakeCache handshakeCache;
   private final ConnectionThrottler connectionThrottler;
@@ -56,8 +63,13 @@ public final class Conduit {
   private final MotdCache motdCache;
   private final GracefulShutdown gracefulShutdown;
   private final BotFilter botFilter;
+  private final ModdedClientTracker clientTracker;
+  private final ModTrackerListener clientTrackerListener;
+  private final TabCompleteCache tabCompleteCache;
+  private final ChannelGuard channelGuard;
 
   private Conduit(Path configDir) {
+    this.configDir = configDir;
     this.conduitVersion = loadVersion();
     logger.info("[Conduit] Starting Conduit v{}", conduitVersion);
 
@@ -85,6 +97,17 @@ public final class Conduit {
     this.botFilter = config.isBotFilterEnabled()
         ? new BotFilter(config.getBotFilterTimeoutMs(), config.getBotFilterThreshold())
         : BotFilter.DISABLED;
+
+    this.clientTracker = new ModdedClientTracker();
+    this.clientTrackerListener = new ModTrackerListener(clientTracker);
+    this.tabCompleteCache = config.isTabCompleteCacheEnabled()
+        ? new TabCompleteCache(config.getTabCompleteCacheTtlMs(),
+            config.getTabCompleteCacheMaxEntries(), diagnostics)
+        : TabCompleteCache.DISABLED;
+    this.channelGuard = config.isChannelGuardEnabled()
+        ? new ChannelGuard(config.getChannelGuardBlockList(),
+            ChannelGuard.Action.parse(config.getChannelGuardAction()), diagnostics)
+        : ChannelGuard.DISABLED;
 
     logStartupSummary();
   }
@@ -130,6 +153,17 @@ public final class Conduit {
       gracefulShutdown.register(proxy);
     }
 
+    clientTrackerListener.register(plugin, proxy);
+
+    channelGuard.register(plugin, proxy);
+
+    if (config.isAdminCommandsEnabled()) {
+      ConduitCommand.register(proxy, plugin);
+    }
+    if (config.isModListCommandEnabled()) {
+      ModListCommand.register(proxy, plugin);
+    }
+
     logger.info("[Conduit] All subsystems started against proxy.");
   }
 
@@ -150,7 +184,13 @@ public final class Conduit {
     connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
     diagnostics.reconfigure(newConfig);
     logger.info("[Conduit] Reload complete. Note: write-buffer watermarks, health-check interval,"
-        + " MOTD TTL, graceful-shutdown and bot-filter settings require a proxy restart.");
+        + " MOTD TTL, graceful-shutdown, bot-filter, tab-complete cache, and channel-guard"
+        + " settings require a proxy restart.");
+  }
+
+  /** Reloads using the config directory passed to {@link #init}. */
+  public void reload() {
+    reload(configDir);
   }
 
   /** Returns the loaded {@link ConduitConfig}. */
@@ -201,6 +241,26 @@ public final class Conduit {
     return botFilter;
   }
 
+  /** Returns the active {@link ModdedClientTracker}. */
+  public ModdedClientTracker getClientTracker() {
+    return clientTracker;
+  }
+
+  /** Returns the listener that feeds {@link ModdedClientTracker} from public events. */
+  public ModTrackerListener getClientTrackerListener() {
+    return clientTrackerListener;
+  }
+
+  /** Returns the active {@link TabCompleteCache}. */
+  public TabCompleteCache getTabCompleteCache() {
+    return tabCompleteCache;
+  }
+
+  /** Returns the active {@link ChannelGuard}. */
+  public ChannelGuard getChannelGuard() {
+    return channelGuard;
+  }
+
   /** Returns the Conduit build version string. */
   public String getConduitVersion() {
     return conduitVersion;
@@ -242,6 +302,14 @@ public final class Conduit {
     logger.info("[Conduit]   bot-filter              = {} (timeout {}ms, threshold {})",
         config.isBotFilterEnabled(), config.getBotFilterTimeoutMs(),
         config.getBotFilterThreshold());
+    logger.info("[Conduit]   tab-complete-cache      = {} (TTL {}ms, max {})",
+        config.isTabCompleteCacheEnabled(), config.getTabCompleteCacheTtlMs(),
+        config.getTabCompleteCacheMaxEntries());
+    logger.info("[Conduit]   channel-guard           = {} (action {}, {} patterns)",
+        config.isChannelGuardEnabled(), config.getChannelGuardAction(),
+        config.getChannelGuardBlockList().size());
+    logger.info("[Conduit]   admin-commands          = {}", config.isAdminCommandsEnabled());
+    logger.info("[Conduit]   modlist-command         = {}", config.isModListCommandEnabled());
   }
 
   private static String loadVersion() {

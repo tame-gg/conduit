@@ -51,6 +51,9 @@ public final class ConduitDiagnostics {
   private final LongAdder slowLogins             = new LongAdder();
   private final LongAdder compressionSkips       = new LongAdder();
   private final LongAdder packetQueueFlushes     = new LongAdder();
+  private final LongAdder tabCompleteCacheHits   = new LongAdder();
+  private final LongAdder tabCompleteCacheMisses = new LongAdder();
+  private final LongAdder channelsBlocked        = new LongAdder();
 
   /** Per-player login timing (player name → connect-start millis). */
   private final ConcurrentHashMap<String, Long> loginTimings = new ConcurrentHashMap<>();
@@ -157,6 +160,24 @@ public final class ConduitDiagnostics {
     }
   }
 
+  /** Records a hit on the tab-completion cache. */
+  public void recordTabCompleteCacheHit() {
+    tabCompleteCacheHits.increment();
+  }
+
+  /** Records a miss on the tab-completion cache (i.e., the backend was queried). */
+  public void recordTabCompleteCacheMiss() {
+    tabCompleteCacheMisses.increment();
+  }
+
+  /** Records that a plugin-message channel was blocked by {@code ChannelGuard}. */
+  public void recordChannelBlocked(String playerName, String channel, String action) {
+    channelsBlocked.increment();
+    if (enabled) {
+      logger.info("[Conduit] ChannelGuard {} '{}' from {}", action, channel, playerName);
+    }
+  }
+
   // ── Snapshot ──────────────────────────────────────────────────────────────
 
   /** Returns a formatted multi-line string with a snapshot of all diagnostic counters. */
@@ -171,7 +192,10 @@ public final class ConduitDiagnostics {
         + "  Oversized payloads     : %d%n"
         + "  Slow logins (>%dms)    : %d%n"
         + "  Compression skips      : %d%n"
-        + "  Packet queue flushes   : %d%n",
+        + "  Packet queue flushes   : %d%n"
+        + "  Tab-complete hits      : %d%n"
+        + "  Tab-complete misses    : %d%n"
+        + "  Channels blocked       : %d%n",
         totalConnections.sum(),
         moddedConnections.sum(),
         handshakeCacheHits.sum(),
@@ -181,7 +205,10 @@ public final class ConduitDiagnostics {
         slowThresholdMs,
         slowLogins.sum(),
         compressionSkips.sum(),
-        packetQueueFlushes.sum());
+        packetQueueFlushes.sum(),
+        tabCompleteCacheHits.sum(),
+        tabCompleteCacheMisses.sum(),
+        channelsBlocked.sum());
   }
 
   // ── Getters for tests ─────────────────────────────────────────────────────
@@ -219,5 +246,20 @@ public final class ConduitDiagnostics {
   /** Returns the total number of times compression was skipped. */
   public long getCompressionSkips() {
     return compressionSkips.sum();
+  }
+
+  /** Returns the total number of tab-complete cache hits. */
+  public long getTabCompleteCacheHits() {
+    return tabCompleteCacheHits.sum();
+  }
+
+  /** Returns the total number of tab-complete cache misses. */
+  public long getTabCompleteCacheMisses() {
+    return tabCompleteCacheMisses.sum();
+  }
+
+  /** Returns the total number of plugin-message channels blocked by {@code ChannelGuard}. */
+  public long getChannelsBlocked() {
+    return channelsBlocked.sum();
   }
 }

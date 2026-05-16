@@ -28,7 +28,10 @@ Fabric, Forge, and NeoForge backends.
 | **MOTD caching** | Caches server list pings per IP to reduce repeated ping overhead. |
 | **Graceful shutdown** | Transfers connected players to a fallback server (or disconnects with a friendly message) before the proxy exits. |
 | **Bot filter** | Blocks IPs that repeatedly open connections without completing the login handshake. |
+| **Channel guard** | Intercepts known cheat / exploit plugin-message channels (World-Downloader, X-Ray clients) and applies a drop / kick / log policy. |
+| **Tab-complete cache** | Short-TTL LRU cache for backend tab-completion responses keyed on (server, prefix). Absorbs key-held tab spam at near-zero CPU. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
+| **Operator commands** | `/conduit reload \| diagnostics \| health \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
 
 ---
 
@@ -111,6 +114,9 @@ packet-queue-optimization          = true
 packet-queue-max-depth             = 256
 connection-throttle                = true
 connection-throttle-max-per-second = 30
+tab-complete-cache                 = false     # opt-in; integrates via overlay (see CHANGES)
+tab-complete-cache-ttl-ms          = 1500
+tab-complete-cache-max-entries     = 1024
 
 [diagnostics]
 enabled                      = false
@@ -129,7 +135,34 @@ graceful-shutdown-message       = "Proxy is restarting. Please reconnect in a mo
 bot-filter-enabled              = true
 bot-filter-timeout-ms           = 3000
 bot-filter-threshold            = 10
+
+[security]
+channel-guard                   = false     # opt-in; default-off blocks player traffic
+channel-guard-action            = "drop"    # drop | kick | log
+channel-guard-block-list        = [         # case-insensitive; trailing ':' matches namespace
+    "wdl:init", "wdl:control", "wdl:request",
+    "world_downloader:init", "world_downloader:control", "world_downloader:request",
+    "xaero:", "schematica:", "bsm:", "5zig:",
+]
+
+[commands]
+admin-enabled                   = true      # registers /conduit (permission: conduit.admin)
+modlist-enabled                 = true      # registers /modlist  (permission: conduit.modlist)
 ```
+
+### Operator commands
+
+| Command | What it does | Permission |
+|---------|--------------|------------|
+| `/conduit reload` | Re-reads `conduit.toml` and applies live-tunable values (handshake TTL, throttle rate, diagnostics flags). | `conduit.admin` |
+| `/conduit diagnostics` | Prints the counter snapshot — connections, cache hits, throttles, slow logins, channels blocked, etc. | `conduit.admin` |
+| `/conduit health` | Prints the per-backend health summary (`HEALTHY` / `UNHEALTHY`, failure count, last-checked timestamp). | `conduit.admin` |
+| `/conduit unblock <ip>` | Clears a bot-filter block on the given IP. | `conduit.admin` |
+| `/conduit cache invalidate <ip>` | Drops cached MOTD and modded-handshake entries for the given IP. | `conduit.admin` |
+| `/modlist` | Lists every connected player with their detected mod loader and channel count. | `conduit.modlist` |
+| `/modlist <player>` | Shows the detailed channel and known-pack list for one player. Tab-completes player names. | `conduit.modlist` |
+
+The `conduit.channelguard.bypass` permission exempts staff accounts from `ChannelGuard` blocks.
 
 ### Migrating from KnownPacksFix
 
@@ -157,21 +190,27 @@ conduit/
 │   └── proxy/src/main/java/com/velocitypowered/proxy/conduit/
 │       ├── Conduit.java                  lifecycle manager
 │       ├── ConduitConfig.java            conduit.toml reader
+│       ├── command/
+│       │   ├── ConduitCommand.java       /conduit admin command
+│       │   └── ModListCommand.java       /modlist [player] command
 │       ├── modded/
 │       │   ├── ModdedHandshakeCache.java
 │       │   ├── ModdedClientTracker.java
+│       │   ├── ModTrackerListener.java   populates the tracker from REGISTER messages
 │       │   └── NeoForgeHandshakeUtil.java
 │       ├── network/
 │       │   ├── SmartCompression.java
 │       │   ├── PacketQueueManager.java
-│       │   └── ConnectionThrottler.java
+│       │   ├── ConnectionThrottler.java
+│       │   └── TabCompleteCache.java
 │       ├── health/
 │       │   ├── BackendHealthChecker.java
 │       │   └── FallbackRouter.java
 │       ├── motd/
 │       │   └── MotdCache.java
 │       ├── security/
-│       │   └── BotFilter.java
+│       │   ├── BotFilter.java
+│       │   └── ChannelGuard.java         drops WDL / X-Ray / cheat-mod channels
 │       ├── shutdown/
 │       │   └── GracefulShutdown.java
 │       └── diagnostics/

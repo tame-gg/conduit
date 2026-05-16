@@ -133,6 +133,75 @@ the `/radarvelocity diagnostics` command.
 
 ---
 
+### `com.velocitypowered.proxy.conduit.command` package
+
+#### `ConduitCommand.java`
+Registers the `/conduit` admin command (permission `conduit.admin`) with subcommands `reload`,
+`diagnostics`, `health`, `unblock <ip>`, and `cache invalidate <ip>`.  Surfaces the existing
+`Conduit.reload()`, `ConduitDiagnostics.buildSummary()`, `BackendHealthChecker.getHealthSummary()`,
+`BotFilter.unblock()`, and cache `invalidate(InetAddress)` methods that previously had no
+operator-facing trigger.  Toggled by `[commands] admin-enabled` in `conduit.toml`.
+
+#### `ModListCommand.java`
+Registers the `/modlist [player]` command (permission `conduit.modlist`).  No-arg form prints a
+one-line summary for every connected player (loader type + channel count); with a player name
+it prints the full channel list and any captured known-pack namespaces.  Tab-completes
+connected player names.  Toggled by `[commands] modlist-enabled`.
+
+---
+
+### Additions to `com.velocitypowered.proxy.conduit.modded`
+
+#### `ModTrackerListener.java`
+Populates the previously-unused `ModdedClientTracker` via the public `PluginMessageEvent` API.
+Listens for `minecraft:register` (and legacy unnamespaced `REGISTER`) payloads, decodes the
+NUL-delimited UTF-8 channel list, and merges it into the tracker.  Uses public events rather
+than overlaying a session handler so it stays upstream-merge-safe.  Cleans up on
+`DisconnectEvent`.
+
+---
+
+### Additions to `com.velocitypowered.proxy.conduit.network`
+
+#### `TabCompleteCache.java`
+Short-TTL LRU cache for backend tab-completion responses, keyed on `(server, prefix)` so
+suggestions cannot leak across backends.  Default OFF in `conduit.toml` because the integration
+point inside Velocity's `ClientPlaySessionHandler` is opt-in: the handler will look up the cache
+on each `TabCompleteRequest` and skip the backend round-trip on hit.  Diagnostics records hits
+and misses so operators can measure the absorption rate before flipping it on permanently.
+
+The class itself is upstream-merge-safe (lives in `additions/`); the session-handler hook is the
+follow-up overlay step.
+
+---
+
+### Additions to `com.velocitypowered.proxy.conduit.security`
+
+#### `ChannelGuard.java`
+Listens for player-originated `PluginMessageEvent` messages and matches the channel id against
+a configurable blocklist.  Patterns ending in `:` match the entire namespace; otherwise the
+match is exact.  Actions: `drop` (silently drop the message), `kick` (drop and disconnect with
+a friendly reason), `log` (forward unchanged, emit a warning — useful for evaluating a new
+pattern before enforcing it).  Default blocklist covers World-Downloader and several common
+X-Ray / schematic / HUD-cheat mods.  Players with the `conduit.channelguard.bypass` permission
+are exempt.  Default OFF.
+
+---
+
+### Updated subsystems
+
+* `Conduit.java` — wires the four new subsystems plus the two new commands; stores the config
+  directory so `/conduit reload` doesn't need to pass it back in.
+* `ConduitConfig.java` — new `[security]` and `[commands]` sections; new
+  `tab-complete-cache-*` keys in `[network]`; validation rejects unknown `channel-guard-action`
+  values.
+* `MotdCache.java` — adds `invalidate(InetAddress)` and `clearAll()` for the
+  `/conduit cache invalidate` subcommand.
+* `ConduitDiagnostics.java` — new counters: tab-complete hits, tab-complete misses, channels
+  blocked.  Exposed via `buildSummary()` and getters.
+
+---
+
 ## Compatibility guarantees
 
 | Concern | Status |

@@ -57,6 +57,16 @@ public class MotdCache {
     public void onProxyPing(ProxyPingEvent event) {
       // no-op
     }
+
+    @Override
+    public boolean invalidate(InetAddress address) {
+      return false;
+    }
+
+    @Override
+    public int clearAll() {
+      return 0;
+    }
   };
 
   private static final Logger logger = LogManager.getLogger(MotdCache.class);
@@ -140,6 +150,34 @@ public class MotdCache {
    */
   public long getCacheMisses() {
     return cacheMisses.sum();
+  }
+
+  /**
+   * Removes any cached ping for the given remote address.
+   *
+   * @return {@code true} if an entry was removed
+   */
+  public boolean invalidate(InetAddress address) {
+    lock.lock();
+    try {
+      return cache.remove(address) != null;
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
+   * Removes every cached entry. Returns the number of evicted entries.
+   */
+  public int clearAll() {
+    lock.lock();
+    try {
+      int previous = cache.size();
+      cache.clear();
+      return previous;
+    } finally {
+      lock.unlock();
+    }
   }
 
   /** Removes all entries whose TTL has elapsed. Caller must hold the lock. */

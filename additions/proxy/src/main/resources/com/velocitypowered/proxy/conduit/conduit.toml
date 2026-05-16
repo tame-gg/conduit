@@ -74,6 +74,14 @@ packet-queue-max-depth = 256
 connection-throttle = true
 connection-throttle-max-per-second = 30
 
+# Cache backend tab-completion responses for a short TTL.  Heavy tab spam on creative/build
+# servers currently re-hits the backend; this absorbs the burst at near-zero CPU on the proxy.
+# Entries are keyed on (server, prefix), so suggestions cannot leak across backends.  Default
+# is OFF because the integration point in ClientPlaySessionHandler is opt-in.
+tab-complete-cache              = false
+tab-complete-cache-ttl-ms       = 1500
+tab-complete-cache-max-entries  = 1024
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [diagnostics] — Debug and observability options
@@ -128,3 +136,48 @@ graceful-shutdown-message    = "Proxy is restarting. Please reconnect in a momen
 bot-filter-enabled    = true
 bot-filter-timeout-ms = 3000
 bot-filter-threshold  = 10
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [security] — Plugin-message channel guard
+# ─────────────────────────────────────────────────────────────────────────────
+[security]
+
+# Intercept player-originated plugin messages on known cheat / exploit channels
+# (World-Downloader, X-Ray clients, etc.).  Matching is case-insensitive; a pattern ending in
+# ':' matches any channel under that namespace, otherwise the match is exact.
+#
+# action:
+#   "drop" — silently drop the message; the connection stays open (default).
+#   "kick" — drop the message and disconnect the player.
+#   "log"  — forward the message but emit a warning log line (useful for evaluation).
+#
+# Players with the `conduit.channelguard.bypass` permission are exempt from all blocks.
+channel-guard          = false
+channel-guard-action   = "drop"
+channel-guard-block-list = [
+    "wdl:init",
+    "wdl:control",
+    "wdl:request",
+    "world_downloader:init",
+    "world_downloader:control",
+    "world_downloader:request",
+    "xaero:",
+    "schematica:",
+    "bsm:",
+    "5zig:",
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [commands] — Operator commands surfaced by Conduit
+# ─────────────────────────────────────────────────────────────────────────────
+[commands]
+
+# Register the `/conduit` admin command.  Permission: `conduit.admin`.
+# Subcommands: reload, diagnostics, health, unblock <ip>, cache invalidate <ip>
+admin-enabled = true
+
+# Register the `/modlist [player]` command.  Permission: `conduit.modlist`.
+# Shows the mod loader and registered channel set for each connected player.
+modlist-enabled = true

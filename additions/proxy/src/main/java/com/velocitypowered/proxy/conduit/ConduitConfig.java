@@ -79,6 +79,20 @@ public final class ConduitConfig {
   private final int botFilterTimeoutMs;
   private final int botFilterThreshold;
 
+  // ── Network (continued) ───────────────────────────────────────────────────
+  private final boolean tabCompleteCacheEnabled;
+  private final int tabCompleteCacheTtlMs;
+  private final int tabCompleteCacheMaxEntries;
+
+  // ── Security section ──────────────────────────────────────────────────────
+  private final boolean channelGuardEnabled;
+  private final String channelGuardAction;
+  private final List<String> channelGuardBlockList;
+
+  // ── Commands section ──────────────────────────────────────────────────────
+  private final boolean adminCommandsEnabled;
+  private final boolean modListCommandEnabled;
+
   private ConduitConfig(Builder b) {
     validate(b);
     this.maxKnownPacks = b.maxKnownPacks;
@@ -114,6 +128,17 @@ public final class ConduitConfig {
     this.botFilterEnabled = b.botFilterEnabled;
     this.botFilterTimeoutMs = b.botFilterTimeoutMs;
     this.botFilterThreshold = b.botFilterThreshold;
+
+    this.tabCompleteCacheEnabled = b.tabCompleteCacheEnabled;
+    this.tabCompleteCacheTtlMs = b.tabCompleteCacheTtlMs;
+    this.tabCompleteCacheMaxEntries = b.tabCompleteCacheMaxEntries;
+
+    this.channelGuardEnabled = b.channelGuardEnabled;
+    this.channelGuardAction = b.channelGuardAction;
+    this.channelGuardBlockList = b.channelGuardBlockList;
+
+    this.adminCommandsEnabled = b.adminCommandsEnabled;
+    this.modListCommandEnabled = b.modListCommandEnabled;
   }
 
   /**
@@ -183,6 +208,24 @@ public final class ConduitConfig {
       b.connectionThrottleEnabled = network.getOrElse("connection-throttle", true);
       b.connectionThrottleMaxPerSecond = network.getIntOrElse(
           "connection-throttle-max-per-second", 30);
+      b.tabCompleteCacheEnabled = network.getOrElse("tab-complete-cache", false);
+      b.tabCompleteCacheTtlMs = network.getIntOrElse("tab-complete-cache-ttl-ms", 1500);
+      b.tabCompleteCacheMaxEntries = network.getIntOrElse(
+          "tab-complete-cache-max-entries", 1024);
+    }
+
+    CommentedConfig security = toml.get("security");
+    if (security != null) {
+      b.channelGuardEnabled = security.getOrElse("channel-guard", false);
+      b.channelGuardAction = security.getOrElse("channel-guard-action", "drop");
+      b.channelGuardBlockList = security.getOrElse("channel-guard-block-list",
+          Builder.DEFAULT_CHANNEL_BLOCK_LIST);
+    }
+
+    CommentedConfig commands = toml.get("commands");
+    if (commands != null) {
+      b.adminCommandsEnabled = commands.getOrElse("admin-enabled", true);
+      b.modListCommandEnabled = commands.getOrElse("modlist-enabled", true);
     }
 
     CommentedConfig diag = toml.get("diagnostics");
@@ -232,6 +275,16 @@ public final class ConduitConfig {
     requirePositive("graceful-shutdown-timeout-ms", b.gracefulShutdownTimeoutMs);
     requirePositive("bot-filter-timeout-ms", b.botFilterTimeoutMs);
     requirePositive("bot-filter-threshold", b.botFilterThreshold);
+    requirePositive("tab-complete-cache-ttl-ms", b.tabCompleteCacheTtlMs);
+    requirePositive("tab-complete-cache-max-entries", b.tabCompleteCacheMaxEntries);
+    String action = b.channelGuardAction;
+    if (action == null
+        || !(action.equalsIgnoreCase("drop")
+              || action.equalsIgnoreCase("kick")
+              || action.equalsIgnoreCase("log"))) {
+      throw new IllegalArgumentException("conduit.toml: channel-guard-action must be one of"
+          + " 'drop', 'kick', 'log' — got '" + action + "'");
+    }
   }
 
   private static void requirePositive(String key, int value) {
@@ -430,6 +483,52 @@ public final class ConduitConfig {
     return botFilterThreshold;
   }
 
+  // ── Tab-complete cache getters ────────────────────────────────────────────
+
+  /** Returns whether tab-complete response caching is enabled. */
+  public boolean isTabCompleteCacheEnabled() {
+    return tabCompleteCacheEnabled;
+  }
+
+  /** Returns the TTL in milliseconds for cached tab-complete responses. */
+  public int getTabCompleteCacheTtlMs() {
+    return tabCompleteCacheTtlMs;
+  }
+
+  /** Returns the maximum number of cached tab-complete entries per server. */
+  public int getTabCompleteCacheMaxEntries() {
+    return tabCompleteCacheMaxEntries;
+  }
+
+  // ── Channel-guard getters ─────────────────────────────────────────────────
+
+  /** Returns whether the plugin-message channel guard is enabled. */
+  public boolean isChannelGuardEnabled() {
+    return channelGuardEnabled;
+  }
+
+  /** Returns the action taken on a blocked channel: {@code drop}, {@code kick}, or {@code log}. */
+  public String getChannelGuardAction() {
+    return channelGuardAction;
+  }
+
+  /** Returns the list of channel-name patterns rejected by the channel guard. */
+  public List<String> getChannelGuardBlockList() {
+    return channelGuardBlockList;
+  }
+
+  // ── Command getters ───────────────────────────────────────────────────────
+
+  /** Returns whether the {@code /conduit} admin command is registered. */
+  public boolean isAdminCommandsEnabled() {
+    return adminCommandsEnabled;
+  }
+
+  /** Returns whether the {@code /modlist} command is registered. */
+  public boolean isModListCommandEnabled() {
+    return modListCommandEnabled;
+  }
+
   // ── Builder ───────────────────────────────────────────────────────────────
 
   /** Mutable builder used internally by {@link #fromToml} to construct a {@link ConduitConfig}. */
@@ -467,5 +566,32 @@ public final class ConduitConfig {
     boolean botFilterEnabled = true;
     int botFilterTimeoutMs = 3000;
     int botFilterThreshold = 10;
+
+    boolean tabCompleteCacheEnabled = false;
+    int tabCompleteCacheTtlMs = 1500;
+    int tabCompleteCacheMaxEntries = 1024;
+
+    boolean channelGuardEnabled = false;
+    String channelGuardAction = "drop";
+    List<String> channelGuardBlockList = DEFAULT_CHANNEL_BLOCK_LIST;
+
+    boolean adminCommandsEnabled = true;
+    boolean modListCommandEnabled = true;
+
+    /**
+     * Default channel blocklist for {@code ChannelGuard}: well-known World-Downloader and X-Ray
+     * client channels.  Operators can extend this list via {@code conduit.toml}.
+     */
+    static final List<String> DEFAULT_CHANNEL_BLOCK_LIST = List.of(
+        "wdl:init",
+        "wdl:control",
+        "wdl:request",
+        "world_downloader:init",
+        "world_downloader:control",
+        "world_downloader:request",
+        "xaero:",
+        "schematica:",
+        "bsm:",
+        "5zig:");
   }
 }

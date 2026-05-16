@@ -125,19 +125,46 @@ public class ConnectionThrottler {
 
   // ── Inner types ────────────────────────────────────────────────────────────
 
-  /** Sliding 1-second window for a single IP. */
+  /**
+   * Sliding 1-second window for a single IP, implemented as a ring buffer of connection
+   * timestamps. Old timestamps fall off as time advances, so two back-to-back bursts that
+   * straddle a one-second boundary cannot exceed the configured rate.
+   */
   private static final class IpWindow {
-    private long windowStart = 0;
-    private int count = 0;
+
+    /**
+     * Capacity bounds the worst-case work per {@code record} call. Connections beyond capacity
+     * within one window are throttled regardless of {@code limit}, which is the desired behaviour:
+     * a single IP firing &gt;{@value} connections per second is already abusive.
+     */
+    private static final int CAPACITY = 256;
+    private static final long WINDOW_MS = 1000L;
+
+    private final long[] timestamps = new long[CAPACITY];
+    private int head = 0;
+    private int size = 0;
 
     /** Records a new connection attempt. Returns {@code true} if the rate limit is exceeded. */
     boolean record(long nowMs, int limit) {
-      if (nowMs - windowStart >= 1000) {
-        windowStart = nowMs;
-        count = 1;
-        return false;
+      long cutoff = nowMs - WINDOW_MS;
+      // Drop entries that have fallen out of the window. Tail = head - size (mod CAPACITY).
+      while (size > 0) {
+        int tail = (head - size + CAPACITY) % CAPACITY;
+        if (timestamps[tail] <= cutoff) {
+          size--;
+        } else {
+          break;
+        }
       }
-      return ++count > limit;
+      if (size >= limit) {
+        return true;
+      }
+      timestamps[head] = nowMs;
+      head = (head + 1) % CAPACITY;
+      if (size < CAPACITY) {
+        size++;
+      }
+      return false;
     }
   }
 }

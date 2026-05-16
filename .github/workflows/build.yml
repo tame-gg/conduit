@@ -17,23 +17,30 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Set up upstream Velocity source
         run: ./scripts/setup.sh --ci
 
-      - name: Build with Gradle
-        run: ./gradlew build -x test
+      - name: Build and test
+        run: ./gradlew build
 
       - name: Rename JAR
         run: |
+          set -euo pipefail
           VERSION=$(grep "^conduit.version=" gradle.properties | cut -d= -f2)
-          mv proxy/build/libs/velocity-proxy-*-all.jar proxy/build/libs/conduit-${VERSION}.jar
-
-      - name: Run tests
-        run: ./gradlew test
+          shopt -s nullglob
+          jars=( proxy/build/libs/velocity-proxy-*-all.jar )
+          if [ ${#jars[@]} -ne 1 ]; then
+            echo "Expected exactly one shadow JAR, found ${#jars[@]}: ${jars[*]}" >&2
+            exit 1
+          fi
+          mv "${jars[0]}" "proxy/build/libs/conduit-${VERSION}.jar"
 
       - name: Upload artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: conduit-${{ github.sha }}

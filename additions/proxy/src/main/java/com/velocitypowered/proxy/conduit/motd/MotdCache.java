@@ -17,15 +17,16 @@
 
 package com.velocitypowered.proxy.conduit.motd;
 
+import com.velocitypowered.api.event.PostOrder;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyPingEvent;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import java.net.InetAddress;
-import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -33,9 +34,10 @@ import org.apache.logging.log4j.Logger;
  * Caches {@link ServerPing} responses per connecting {@link InetAddress} to reduce the cost of
  * repeated server-list pings from the same host.
  *
- * <p>On a cache hit the cached {@link ServerPing} is applied to the event immediately and the
- * event's result is frozen, preventing downstream listeners from re-computing it.  Stale entries
- * are pruned lazily on each incoming ping request.
+ * <p>The listener runs at {@link PostOrder#LATE} so other plugins still see the event first
+ * and can mutate the ping; the cache reads the final ping after them and serves it on subsequent
+ * hits.  Stale entries are pruned lazily on cache writes; LRU eviction caps memory at
+ * {@value #MAX_ENTRIES} unique addresses.
  *
  * <p>The singleton {@link #DISABLED} instance performs no caching and registers no listeners.
  */
@@ -59,8 +61,18 @@ public class MotdCache {
 
   private static final Logger logger = LogManager.getLogger(MotdCache.class);
 
+  /** Cap on distinct remote addresses cached; protects against IPv6 scanner flooding. */
+  static final int MAX_ENTRIES = 4096;
+
   private final long ttlMs;
-  private final ConcurrentHashMap<InetAddress, CachedPing> cache = new ConcurrentHashMap<>();
+  private final ReentrantLock lock = new ReentrantLock();
+  private final LinkedHashMap<InetAddress, CachedPing> cache =
+      new LinkedHashMap<>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<InetAddress, CachedPing> eldest) {
+          return size() > MAX_ENTRIES;
+        }
+      };
   private final LongAdder cacheHits = new LongAdder();
   private final LongAdder cacheMisses = new LongAdder();
 
@@ -90,23 +102,26 @@ public class MotdCache {
    *
    * @param event the ping event
    */
-  @Subscribe
+  @Subscribe(order = PostOrder.LATE)
   public void onProxyPing(ProxyPingEvent event) {
     InetAddress address = event.getConnection().getRemoteAddress().getAddress();
     long now = System.currentTimeMillis();
 
-    pruneExpired(now);
+    lock.lock();
+    try {
+      CachedPing cached = cache.get(address);
+      if (cached != null && now - cached.timestamp() < ttlMs) {
+        event.setPing(cached.ping());
+        cacheHits.increment();
+        return;
+      }
 
-    CachedPing cached = cache.get(address);
-    if (cached != null && now - cached.timestamp() < ttlMs) {
-      event.setPing(cached.ping());
-      cacheHits.increment();
-      return;
+      cacheMisses.increment();
+      cache.put(address, new CachedPing(event.getPing(), now));
+      pruneExpired(now);
+    } finally {
+      lock.unlock();
     }
-
-    cacheMisses.increment();
-    ServerPing ping = event.getPing();
-    cache.put(address, new CachedPing(ping, now));
   }
 
   /**
@@ -127,15 +142,9 @@ public class MotdCache {
     return cacheMisses.sum();
   }
 
-  /** Removes all entries whose TTL has elapsed. */
+  /** Removes all entries whose TTL has elapsed. Caller must hold the lock. */
   private void pruneExpired(long now) {
-    Iterator<Map.Entry<InetAddress, CachedPing>> it = cache.entrySet().iterator();
-    while (it.hasNext()) {
-      Map.Entry<InetAddress, CachedPing> entry = it.next();
-      if (now - entry.getValue().timestamp() >= ttlMs) {
-        it.remove();
-      }
-    }
+    cache.entrySet().removeIf(e -> now - e.getValue().timestamp() >= ttlMs);
   }
 
   // ── Inner types ────────────────────────────────────────────────────────────

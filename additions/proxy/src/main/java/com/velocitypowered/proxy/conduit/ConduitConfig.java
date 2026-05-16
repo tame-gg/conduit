@@ -80,6 +80,7 @@ public final class ConduitConfig {
   private final int botFilterThreshold;
 
   private ConduitConfig(Builder b) {
+    validate(b);
     this.maxKnownPacks = b.maxKnownPacks;
     this.handshakeCacheEnabled = b.handshakeCacheEnabled;
     this.handshakeCacheTtlSeconds = b.handshakeCacheTtlSeconds;
@@ -138,11 +139,21 @@ public final class ConduitConfig {
       }
     }
 
-    try (CommentedFileConfig toml = CommentedFileConfig.of(file)) {
+    // We construct the FileConfig without try-with-resources because CommentedFileConfig#close()
+    // will write back to disk, reformatting the user's file. We only want to read.
+    CommentedFileConfig toml = CommentedFileConfig.of(file);
+    try {
       toml.load();
       ConduitConfig cfg = fromToml(toml);
       cfg.applyLiveValues();
       return cfg;
+    } finally {
+      // Close the underlying channels but don't trigger a save.
+      try {
+        toml.close();
+      } catch (RuntimeException ignored) {
+        // best-effort
+      }
     }
   }
 
@@ -198,6 +209,41 @@ public final class ConduitConfig {
     }
 
     return new ConduitConfig(b);
+  }
+
+  /** Throws {@link IllegalArgumentException} on out-of-range numeric values. */
+  private static void validate(Builder b) {
+    requirePositive("max-known-packs", b.maxKnownPacks);
+    requireNonNegative("handshake-cache-ttl", b.handshakeCacheTtlSeconds);
+    requirePositive("handshake-timeout-ms", b.moddedHandshakeTimeoutMs);
+    requirePositive("write-buffer-high-watermark", b.writeBufferHighWatermark);
+    requirePositive("write-buffer-low-watermark", b.writeBufferLowWatermark);
+    if (b.writeBufferLowWatermark > b.writeBufferHighWatermark) {
+      throw new IllegalArgumentException(
+          "write-buffer-low-watermark (" + b.writeBufferLowWatermark
+              + ") must be <= write-buffer-high-watermark (" + b.writeBufferHighWatermark + ")");
+    }
+    requireNonNegative("smart-compression-min-delta", b.smartCompressionMinSizeDelta);
+    requirePositive("packet-queue-max-depth", b.packetQueueMaxDepth);
+    requirePositive("connection-throttle-max-per-second", b.connectionThrottleMaxPerSecond);
+    requireNonNegative("slow-connection-threshold-ms", b.slowConnectionThresholdMs);
+    requirePositive("health-check-interval-ms", b.healthCheckIntervalMs);
+    requirePositive("motd-cache-ttl-ms", b.motdCacheTtlMs);
+    requirePositive("graceful-shutdown-timeout-ms", b.gracefulShutdownTimeoutMs);
+    requirePositive("bot-filter-timeout-ms", b.botFilterTimeoutMs);
+    requirePositive("bot-filter-threshold", b.botFilterThreshold);
+  }
+
+  private static void requirePositive(String key, int value) {
+    if (value <= 0) {
+      throw new IllegalArgumentException("conduit.toml: " + key + " must be > 0, got " + value);
+    }
+  }
+
+  private static void requireNonNegative(String key, int value) {
+    if (value < 0) {
+      throw new IllegalArgumentException("conduit.toml: " + key + " must be >= 0, got " + value);
+    }
   }
 
   /** Pushes config values into subsystems that cache them statically for hot-path performance. */

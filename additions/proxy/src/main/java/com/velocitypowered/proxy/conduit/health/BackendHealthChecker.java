@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -69,7 +70,8 @@ public class BackendHealthChecker {
 
   private final long intervalMs;
   private final ConcurrentHashMap<String, ServerHealthState> states = new ConcurrentHashMap<>();
-  private ScheduledExecutorService scheduler;
+  private final ConcurrentHashMap<String, Boolean> inflight = new ConcurrentHashMap<>();
+  private volatile ScheduledExecutorService scheduler;
 
   /**
    * Constructs a health checker that pings servers every {@code intervalMs} milliseconds.
@@ -145,36 +147,53 @@ public class BackendHealthChecker {
     return sb.toString();
   }
 
+  /** Per-ping timeout, scaled down from the check interval so a slow backend cannot stack up. */
+  private long pingTimeoutMs() {
+    return Math.max(1000L, intervalMs / 2);
+  }
+
   private void runChecks(ProxyServer proxy) {
     for (RegisteredServer server : proxy.getAllServers()) {
       String name = server.getServerInfo().getName();
-      server.ping().whenComplete((ping, err) -> {
-        if (err != null) {
-          handleFailure(name);
-        } else {
-          handleSuccess(name);
-        }
-      });
+      // Skip if a previous check is still outstanding — prevents pile-up on slow backends.
+      if (inflight.putIfAbsent(name, Boolean.TRUE) != null) {
+        continue;
+      }
+      server.ping()
+          .orTimeout(pingTimeoutMs(), TimeUnit.MILLISECONDS)
+          .whenComplete((ping, err) -> {
+            try {
+              if (err != null) {
+                handleFailure(name, err);
+              } else {
+                handleSuccess(name);
+              }
+            } finally {
+              inflight.remove(name);
+            }
+          });
     }
   }
 
   private void handleSuccess(String name) {
-    ServerHealthState prev = states.put(name, new ServerHealthState(true, 0, Instant.now()));
-    if (prev != null && !prev.healthy) {
-      logger.info("[Conduit] Backend server '{}' has recovered and is now healthy.", name);
-    }
+    states.compute(name, (k, prev) -> {
+      if (prev != null && !prev.healthy) {
+        logger.info("[Conduit] Backend server '{}' has recovered and is now healthy.", k);
+      }
+      return new ServerHealthState(true, 0, Instant.now());
+    });
   }
 
-  private void handleFailure(String name) {
+  private void handleFailure(String name, Throwable err) {
     states.compute(name, (k, prev) -> {
       int failures = (prev == null ? 0 : prev.consecutiveFailures) + 1;
       boolean wasHealthy = (prev == null || prev.healthy);
-      ServerHealthState next = new ServerHealthState(false, failures, Instant.now());
       if (wasHealthy) {
-        logger.warn("[Conduit] Backend server '{}' is UNHEALTHY (consecutive failures: {}).",
-            k, failures);
+        String reason = (err instanceof TimeoutException) ? "ping timed out" : err.getClass().getSimpleName();
+        logger.warn("[Conduit] Backend server '{}' is UNHEALTHY ({}; consecutive failures: {}).",
+            k, reason, failures);
       }
-      return next;
+      return new ServerHealthState(false, failures, Instant.now());
     });
   }
 

@@ -1,4 +1,4 @@
-# radar.toml — Conduit configuration
+# conduit.toml — Conduit configuration
 # This file is separate from velocity.toml so upstream merges stay clean.
 # All settings here are optional; built-in defaults are listed as comments.
 
@@ -90,3 +90,41 @@ trace-mod-handshakes = false
 
 # Log a warning when a player's initial login takes longer than this (ms).
 slow-connection-threshold-ms = 3000
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [server] — Backend health, fallback routing, MOTD cache, shutdown, bot filter
+# ─────────────────────────────────────────────────────────────────────────────
+[server]
+
+# Periodically ping every registered backend server; servers that don't respond
+# within (interval / 2) are marked UNHEALTHY and excluded from fallback routing.
+health-check-enabled     = true
+health-check-interval-ms = 10000
+
+# Ordered list of preferred fallback server names.  Used both for /server kicks
+# (FallbackRouter) and graceful shutdown.  The first server in the list that is
+# healthy and registered is chosen.  Leave empty to disable fallback routing.
+fallback-servers = []
+
+# Cache server-list ping responses per remote IP.  Cuts CPU for status scanners
+# and reduces backend ping volume.  TTL is in milliseconds; the cache is bounded
+# to 4 096 distinct IPs (LRU eviction beyond that).
+motd-cache-enabled = true
+motd-cache-ttl-ms  = 2000
+
+# On JVM shutdown, transfer connected players to a fallback server before the
+# proxy exits.  If no fallback is configured (or all are unhealthy/missing) the
+# players are disconnected with the configured message.  The shutdown hook
+# waits up to graceful-shutdown-timeout-ms for transfers to complete.
+graceful-shutdown-enabled    = true
+graceful-shutdown-timeout-ms = 5000
+graceful-shutdown-message    = "Proxy is restarting. Please reconnect in a moment."
+
+# Block IPs that repeatedly open TCP connections but never finish the handshake
+# (a common bot-flood pattern).  An IP that triggers `bot-filter-threshold`
+# incomplete handshakes within a rolling 60-second window is blocked for 10
+# minutes (renewed by further incomplete handshakes).
+bot-filter-enabled    = true
+bot-filter-timeout-ms = 3000
+bot-filter-threshold  = 10

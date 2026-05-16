@@ -36,6 +36,11 @@ import org.apache.logging.log4j.Logger;
  * attack. The lock is coarse-grained and used only on the connection-accept path, not on the
  * hot packet path.
  *
+ * <p>Blocks are not permanent: once an IP is blocked, the block expires after
+ * {@value #BLOCK_DURATION_MS} ms of inactivity (no further incomplete handshakes within the
+ * 60-second window).  This allows legitimate clients on shared IPs (carrier-grade NAT, VPN exit
+ * nodes) to recover without manual intervention.
+ *
  * <p>The singleton {@link #DISABLED} instance performs no tracking and always reports every IP
  * as unblocked.
  */
@@ -70,6 +75,8 @@ public class BotFilter {
   private static final Logger logger = LogManager.getLogger(BotFilter.class);
   private static final int MAX_TRACKED_IPS = 8192;
   private static final long WINDOW_MS = 60_000L;
+  /** How long an IP remains blocked after the most recent incomplete handshake. */
+  static final long BLOCK_DURATION_MS = 10 * 60_000L; // 10 minutes
 
   private final long handshakeTimeoutMs;
   private final int threshold;
@@ -144,10 +151,12 @@ public class BotFilter {
       IpRecord rec = records.computeIfAbsent(addr, k -> new IpRecord());
       rec.pendingStart = 0;
       rec.addIncomplete(now);
+      rec.lastIncompleteAt = now;
       if (rec.incompleteCount(now) >= threshold && !rec.blocked) {
         rec.blocked = true;
-        logger.warn("[Conduit] BotFilter: blocking {} — {} incomplete handshakes in {}s window.",
-            addr.getHostAddress(), threshold, WINDOW_MS / 1000);
+        logger.warn("[Conduit] BotFilter: blocking {} — {} incomplete handshakes in {}s window"
+                + " (expires in {}m).",
+            addr.getHostAddress(), threshold, WINDOW_MS / 1000, BLOCK_DURATION_MS / 60_000);
       }
     } finally {
       lock.unlock();
@@ -162,10 +171,39 @@ public class BotFilter {
    * @return {@code true} if this IP should be rejected at channel-init time
    */
   public boolean isBlocked(InetAddress addr) {
+    long now = System.currentTimeMillis();
     lock.lock();
     try {
       IpRecord rec = records.get(addr);
-      return rec != null && rec.blocked;
+      if (rec == null || !rec.blocked) {
+        return false;
+      }
+      if (now - rec.lastIncompleteAt >= BLOCK_DURATION_MS) {
+        rec.blocked = false;
+        logger.info("[Conduit] BotFilter: unblocking {} (block expired after {}m of inactivity).",
+            addr.getHostAddress(), BLOCK_DURATION_MS / 60_000);
+        return false;
+      }
+      return true;
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
+   * Manually unblocks the given IP. Intended for admin commands; returns {@code true} if the IP
+   * was actually blocked.
+   */
+  public boolean unblock(InetAddress addr) {
+    lock.lock();
+    try {
+      IpRecord rec = records.get(addr);
+      if (rec == null || !rec.blocked) {
+        return false;
+      }
+      rec.blocked = false;
+      logger.info("[Conduit] BotFilter: manually unblocking {}.", addr.getHostAddress());
+      return true;
     } finally {
       lock.unlock();
     }
@@ -187,13 +225,15 @@ public class BotFilter {
     /** Wall-clock time (ms) when the most recent handshake started; 0 if none pending. */
     long pendingStart = 0;
 
-    /** Whether this IP has been permanently blocked for the lifetime of this entry. */
+    /** Whether this IP is currently blocked. Time-bounded by {@link #BLOCK_DURATION_MS}. */
     boolean blocked = false;
+
+    /** Wall-clock time (ms) of the most recent incomplete handshake. Drives block expiry. */
+    long lastIncompleteAt = 0;
 
     /**
      * Ring buffer of timestamps (ms) for incomplete handshake events within the window.
-     * We store at most {@value BotFilter#MAX_TRACKED_IPS} entries per IP — but in practice
-     * we only need enough to count up to the threshold, so 64 is generous.
+     * 64 slots is generous; we only need enough headroom to count up to the threshold.
      */
     private final long[] timestamps = new long[64];
     private int head = 0;

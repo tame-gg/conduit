@@ -23,7 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -36,7 +36,8 @@ import org.apache.logging.log4j.Logger;
  * spurious cache misses.
  *
  * <p>The cache is bounded (max 2 048 entries) with LRU eviction and a configurable TTL.
- * Thread-safe via a read-write lock — reads on the hot path acquire only a read lock.
+ * Thread-safe via a single mutex; {@link LinkedHashMap} in access-order mode mutates its
+ * internal list on every {@code get()}, so even reads must hold the write side of any lock.
  */
 public class ModdedHandshakeCache {
 
@@ -63,7 +64,7 @@ public class ModdedHandshakeCache {
   private static final int MAX_ENTRIES = 2048;
 
   private volatile int ttlSeconds;
-  private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+  private final ReentrantLock lock = new ReentrantLock();
 
   // LinkedHashMap in access-order mode gives LRU eviction for free.
   private final LinkedHashMap<CacheKey, TimedEntry> cache =
@@ -95,18 +96,19 @@ public class ModdedHandshakeCache {
     CacheKey key = new CacheKey(addr, mods);
     long now = System.currentTimeMillis();
 
-    lock.readLock().lock();
+    lock.lock();
     try {
       TimedEntry te = cache.get(key);
       if (te == null) {
         return null;
       }
       if (now - te.storedAt > (long) ttlSeconds * 1000) {
+        cache.remove(key);
         return null;
       }
       return te.entry;
     } finally {
-      lock.readLock().unlock();
+      lock.unlock();
     }
   }
 
@@ -118,32 +120,32 @@ public class ModdedHandshakeCache {
     CacheKey key = new CacheKey(addr, mods);
     TimedEntry te = new TimedEntry(entry, System.currentTimeMillis());
 
-    lock.writeLock().lock();
+    lock.lock();
     try {
       cache.put(key, te);
       pruneExpired();
     } finally {
-      lock.writeLock().unlock();
+      lock.unlock();
     }
   }
 
   /** Removes all entries for a given client IP (e.g. on disconnect after error). */
   public void invalidate(InetAddress addr) {
-    lock.writeLock().lock();
+    lock.lock();
     try {
       cache.entrySet().removeIf(e -> e.getKey().address.equals(addr));
     } finally {
-      lock.writeLock().unlock();
+      lock.unlock();
     }
   }
 
   /** Returns the number of entries currently held in the cache. */
   public int size() {
-    lock.readLock().lock();
+    lock.lock();
     try {
       return cache.size();
     } finally {
-      lock.readLock().unlock();
+      lock.unlock();
     }
   }
 
@@ -155,11 +157,11 @@ public class ModdedHandshakeCache {
   public void setTtlSeconds(int ttlSeconds) {
     this.ttlSeconds = ttlSeconds;
     if (ttlSeconds <= 0) {
-      lock.writeLock().lock();
+      lock.lock();
       try {
         cache.clear();
       } finally {
-        lock.writeLock().unlock();
+        lock.unlock();
       }
     }
   }
@@ -200,7 +202,7 @@ public class ModdedHandshakeCache {
     }
 
     private static String buildFingerprint(List<String> mods) {
-      return mods.stream().sorted().reduce("", (a, b) -> a.isEmpty() ? b : a + "," + b);
+      return mods.stream().sorted().collect(java.util.stream.Collectors.joining(","));
     }
 
     @Override

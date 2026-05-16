@@ -627,6 +627,12 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
         eventManager.fire(new ProxyShutdownEvent()).join();
 
+        try {
+          Conduit.get().shutdown();
+        } catch (IllegalStateException ignored) {
+          // Conduit was never initialised — nothing to tear down.
+        }
+
         timedOut = !scheduler.shutdown() || timedOut;
 
         if (timedOut) {

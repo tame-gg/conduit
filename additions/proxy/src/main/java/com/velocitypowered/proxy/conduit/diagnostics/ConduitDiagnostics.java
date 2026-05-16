@@ -30,8 +30,8 @@ import org.apache.logging.log4j.Logger;
  * negligible overhead even when diagnostics are disabled (the {@code enabled} flag short-circuits
  * before any string formatting).
  *
- * <p>Planned integration: a future {@code /radarvelocity diagnostics} command will print a
- * formatted summary of all counters and the slowest-login histogram.
+ * <p>Counters can be sampled via {@link #buildSummary()}; integration with an admin command is
+ * left to the embedding plugin.
  */
 public final class ConduitDiagnostics {
 
@@ -43,7 +43,7 @@ public final class ConduitDiagnostics {
 
   // ── Counters ───────────────────────────────────────────────────────────────
   private final LongAdder totalConnections       = new LongAdder();
-  private final LongAdder modddedConnections     = new LongAdder();
+  private final LongAdder moddedConnections     = new LongAdder();
   private final LongAdder handshakeCacheHits     = new LongAdder();
   private final LongAdder handshakeCacheMisses   = new LongAdder();
   private final LongAdder throttledConnections   = new LongAdder();
@@ -78,7 +78,7 @@ public final class ConduitDiagnostics {
 
   /** Records that the named player connected using the given mod type. */
   public void recordModdedConnection(String playerName, String modType) {
-    modddedConnections.increment();
+    moddedConnections.increment();
     if (enabled) {
       logger.info("[Conduit] Modded connection: {} ({})", playerName, modType);
     }
@@ -86,11 +86,10 @@ public final class ConduitDiagnostics {
 
   /** Records that the named player completed login, and logs slow-login warnings. */
   public void recordLoginComplete(String playerName) {
-    if (!enabled) {
-      return;
-    }
+    // Always evict so a recordConnection() that ran while diagnostics were enabled is cleaned up,
+    // even if diagnostics flipped to disabled before login completed.
     Long start = loginTimings.remove(playerName);
-    if (start == null) {
+    if (start == null || !enabled) {
       return;
     }
     long elapsed = System.currentTimeMillis() - start;
@@ -101,6 +100,14 @@ public final class ConduitDiagnostics {
     } else {
       logger.debug("[Conduit] Login complete: {} in {}ms", playerName, elapsed);
     }
+  }
+
+  /**
+   * Drops a player from the login-timing map without recording slow-login metrics.
+   * Should be called when a connection is dropped before login completes.
+   */
+  public void abandonLogin(String playerName) {
+    loginTimings.remove(playerName);
   }
 
   /** Records a handshake-cache hit for the named player. */
@@ -166,7 +173,7 @@ public final class ConduitDiagnostics {
         + "  Compression skips      : %d%n"
         + "  Packet queue flushes   : %d%n",
         totalConnections.sum(),
-        modddedConnections.sum(),
+        moddedConnections.sum(),
         handshakeCacheHits.sum(),
         handshakeCacheMisses.sum(),
         throttledConnections.sum(),
@@ -186,7 +193,7 @@ public final class ConduitDiagnostics {
 
   /** Returns the total number of modded connections recorded. */
   public long getModdedConnections() {
-    return modddedConnections.sum();
+    return moddedConnections.sum();
   }
 
   /** Returns the total number of handshake-cache hits. */

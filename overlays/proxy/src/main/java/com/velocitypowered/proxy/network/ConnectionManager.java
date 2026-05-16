@@ -114,7 +114,6 @@ public final class ConnectionManager {
    * @param address the address to bind to
    */
   public void bind(final InetSocketAddress address) {
-    // RADAR: resolve write-buffer watermarks from ConduitConfig at bind time.
     WriteBufferWaterMark writeMark = resolveWriteMark();
 
     final ServerBootstrap bootstrap = new ServerBootstrap()
@@ -123,7 +122,7 @@ public final class ConnectionManager {
         .childHandler(this.serverChannelInitializer.get())
         .childOption(ChannelOption.TCP_NODELAY, true)
         .childOption(ChannelOption.IP_TOS, 0x18)
-        // RADAR: increase SO_BACKLOG to 1024 to handle burst connections on large networks.
+        // Conduit: 1024 vs upstream 128 — handles burst connections on large networks.
         .option(ChannelOption.SO_BACKLOG, 1024)
         .localAddress(address);
 

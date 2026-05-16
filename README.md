@@ -39,7 +39,7 @@ Fabric, Forge, and NeoForge backends.
 Grab `conduit-<version>.jar` from the [releases page](https://github.com/koelss/conduit/releases/latest) and run it like any Velocity JAR:
 
 ```bash
-java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.2.1.jar
+java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.2.3.jar
 ```
 
 On first run, Conduit generates a `conduit.toml` file alongside `velocity.toml` with all settings annotated.

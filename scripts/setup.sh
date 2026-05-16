@@ -64,14 +64,18 @@ if [[ -d "$ROOT_DIR/additions" ]]; then
   echo "    Additions applied."
 fi
 
-# ── 5. Write the radar build metadata ────────────────────────────────────────
-RADAR_VERSION=$(grep "^conduit.version=" "$ROOT_DIR/gradle.properties" | cut -d= -f2)
+# ── 5. Write the Conduit build metadata ──────────────────────────────────────
+CONDUIT_VERSION=$(grep "^conduit.version=" "$ROOT_DIR/gradle.properties" | cut -d= -f2)
+if [[ -z "$CONDUIT_VERSION" ]]; then
+  echo "ERROR: conduit.version not found in gradle.properties" >&2
+  exit 1
+fi
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_HASH=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 mkdir -p "$ROOT_DIR/proxy/src/main/resources/com/velocitypowered/proxy/conduit"
 cat > "$ROOT_DIR/proxy/src/main/resources/com/velocitypowered/proxy/conduit/conduit-build.properties" <<EOF
-conduit.version=$RADAR_VERSION
+conduit.version=$CONDUIT_VERSION
 conduit.build.time=$BUILD_TIME
 conduit.git.hash=$GIT_HASH
 conduit.upstream.branch=$UPSTREAM_BRANCH

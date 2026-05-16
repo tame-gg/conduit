@@ -44,7 +44,7 @@ import org.apache.logging.log4j.Logger;
 public final class Conduit {
 
   private static final Logger logger = LogManager.getLogger(Conduit.class);
-  private static Conduit instance;
+  private static volatile Conduit instance;
 
   private final ConduitConfig config;
   private final ModdedHandshakeCache handshakeCache;
@@ -52,7 +52,7 @@ public final class Conduit {
   private final ConduitDiagnostics diagnostics;
   private final String conduitVersion;
   private final BackendHealthChecker healthChecker;
-  private FallbackRouter fallbackRouter;
+  private volatile FallbackRouter fallbackRouter;
   private final MotdCache motdCache;
   private final GracefulShutdown gracefulShutdown;
   private final BotFilter botFilter;
@@ -80,7 +80,7 @@ public final class Conduit {
     this.gracefulShutdown = config.isGracefulShutdownEnabled()
         ? new GracefulShutdown(config.getGracefulShutdownTimeoutMs(),
             config.getGracefulShutdownMessage(),
-            config.getFallbackServers().isEmpty() ? null : config.getFallbackServers().get(0))
+            config.getFallbackServers())
         : null;
     this.botFilter = config.isBotFilterEnabled()
         ? new BotFilter(config.getBotFilterTimeoutMs(), config.getBotFilterThreshold())
@@ -133,14 +133,24 @@ public final class Conduit {
     logger.info("[Conduit] All subsystems started against proxy.");
   }
 
-  /** Reloads conduit.toml and pushes new values into all live subsystems. */
+  /**
+   * Reloads conduit.toml and pushes new values into the subsystems that support live tuning.
+   *
+   * <p>Live-tunable: handshake cache TTL, connection throttler rate, diagnostics flags, max known
+   * packs (via {@link ConduitConfig#applyLiveValues}).
+   *
+   * <p>Restart-required: write-buffer watermarks (bound at listener bind time), backend health-check
+   * interval, MOTD TTL, graceful-shutdown configuration, bot-filter thresholds, fallback-server
+   * list. These are logged as ignored so operators are not misled.
+   */
   public void reload(Path configDir) {
     logger.info("[Conduit] Reloading configuration...");
     ConduitConfig newConfig = ConduitConfig.load(configDir);
     handshakeCache.setTtlSeconds(newConfig.getHandshakeCacheTtlSeconds());
     connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
     diagnostics.reconfigure(newConfig);
-    logger.info("[Conduit] Reload complete.");
+    logger.info("[Conduit] Reload complete. Note: write-buffer watermarks, health-check interval,"
+        + " MOTD TTL, graceful-shutdown and bot-filter settings require a proxy restart.");
   }
 
   /** Returns the loaded {@link ConduitConfig}. */
@@ -196,6 +206,19 @@ public final class Conduit {
     return conduitVersion;
   }
 
+  /**
+   * Stops background work owned by Conduit (health-checker scheduler, etc.).
+   * Idempotent and safe to call even if {@link #start} was never invoked.
+   * Intended to be called from {@code VelocityServer.shutdown()}.
+   */
+  public void shutdown() {
+    try {
+      healthChecker.stop();
+    } catch (RuntimeException e) {
+      logger.warn("[Conduit] Error during shutdown: {}", e.getMessage());
+    }
+  }
+
   private void logStartupSummary() {
     logger.info("[Conduit] v{} initialised:", conduitVersion);
     logger.info("[Conduit]   max-known-packs         = {}", config.getMaxKnownPacks());
@@ -214,7 +237,7 @@ public final class Conduit {
     logger.info("[Conduit]   fallback-servers        = {}", config.getFallbackServers());
     logger.info("[Conduit]   motd-cache              = {} (TTL {}ms)",
         config.isMotdCacheEnabled(), config.getMotdCacheTtlMs());
-    logger.info("[Conduit]   graceful-shutdown        = {} (timeout {}ms)",
+    logger.info("[Conduit]   graceful-shutdown       = {} (timeout {}ms)",
         config.isGracefulShutdownEnabled(), config.getGracefulShutdownTimeoutMs());
     logger.info("[Conduit]   bot-filter              = {} (timeout {}ms, threshold {})",
         config.isBotFilterEnabled(), config.getBotFilterTimeoutMs(),

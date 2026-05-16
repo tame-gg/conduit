@@ -21,6 +21,7 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -42,21 +43,22 @@ public final class GracefulShutdown {
 
   private final long shutdownTimeoutMs;
   private final String shutdownMessage;
-  private final String fallbackServerName;
+  private final List<String> fallbackServerNames;
 
   /**
    * Constructs a {@code GracefulShutdown} handler.
    *
-   * @param shutdownTimeoutMs  the maximum time in milliseconds to wait for all transfers to finish
-   * @param shutdownMessage    the disconnect message shown to players when no fallback is available
-   * @param fallbackServerName the name of the preferred fallback server, or {@code null} / empty
-   *                           to disconnect players immediately
+   * @param shutdownTimeoutMs   the maximum time in milliseconds to wait for all transfers to finish
+   * @param shutdownMessage     the disconnect message shown to players when no fallback is available
+   * @param fallbackServerNames ordered list of preferred fallback server names. The first one
+   *                            that resolves at shutdown time is used. Empty/null disconnects
+   *                            players instead of transferring.
    */
   public GracefulShutdown(long shutdownTimeoutMs, String shutdownMessage,
-      String fallbackServerName) {
+      List<String> fallbackServerNames) {
     this.shutdownTimeoutMs = shutdownTimeoutMs;
     this.shutdownMessage = shutdownMessage;
-    this.fallbackServerName = fallbackServerName;
+    this.fallbackServerNames = fallbackServerNames == null ? List.of() : List.copyOf(fallbackServerNames);
   }
 
   /**
@@ -67,8 +69,8 @@ public final class GracefulShutdown {
   public void register(ProxyServer proxy) {
     Runtime.getRuntime().addShutdownHook(new Thread(() -> shutdown(proxy),
         "conduit-graceful-shutdown"));
-    logger.info("[Conduit] GracefulShutdown hook registered (timeout {}ms, fallback='{}').",
-        shutdownTimeoutMs, fallbackServerName);
+    logger.info("[Conduit] GracefulShutdown hook registered (timeout {}ms, fallbacks={}).",
+        shutdownTimeoutMs, fallbackServerNames);
   }
 
   /**
@@ -90,13 +92,24 @@ public final class GracefulShutdown {
     Optional<RegisteredServer> fallback = resolveFallback(proxy);
     CountDownLatch latch = new CountDownLatch(players.size());
     AtomicInteger transferred = new AtomicInteger(0);
+    AtomicInteger transferFailed = new AtomicInteger(0);
     AtomicInteger disconnected = new AtomicInteger(0);
 
     for (Player player : players) {
       if (fallback.isPresent()) {
-        player.createConnectionRequest(fallback.get()).fireAndForget();
-        transferred.incrementAndGet();
-        latch.countDown();
+        // connect() returns a future we can actually await; fireAndForget() does not.
+        player.createConnectionRequest(fallback.get())
+            .connect()
+            .whenComplete((result, err) -> {
+              if (err == null && result != null && result.isSuccessful()) {
+                transferred.incrementAndGet();
+              } else {
+                transferFailed.incrementAndGet();
+                // The player's session is still open; disconnect them so the proxy can exit.
+                player.disconnect(Component.text(shutdownMessage));
+              }
+              latch.countDown();
+            });
       } else {
         player.disconnect(Component.text(shutdownMessage));
         disconnected.incrementAndGet();
@@ -107,11 +120,13 @@ public final class GracefulShutdown {
     try {
       boolean finished = latch.await(shutdownTimeoutMs, TimeUnit.MILLISECONDS);
       if (finished) {
-        logger.info("[Conduit] GracefulShutdown: complete — {} transferred, {} disconnected.",
-            transferred.get(), disconnected.get());
+        logger.info("[Conduit] GracefulShutdown: complete — {} transferred, {} failed,"
+                + " {} disconnected.",
+            transferred.get(), transferFailed.get(), disconnected.get());
       } else {
-        logger.warn("[Conduit] GracefulShutdown: timed out after {}ms ({} transferred,"
-            + " {} disconnected).", shutdownTimeoutMs, transferred.get(), disconnected.get());
+        logger.warn("[Conduit] GracefulShutdown: timed out after {}ms ({} transferred, {} failed,"
+            + " {} disconnected).", shutdownTimeoutMs, transferred.get(), transferFailed.get(),
+            disconnected.get());
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
@@ -120,9 +135,15 @@ public final class GracefulShutdown {
   }
 
   private Optional<RegisteredServer> resolveFallback(ProxyServer proxy) {
-    if (fallbackServerName == null || fallbackServerName.isBlank()) {
-      return Optional.empty();
+    for (String name : fallbackServerNames) {
+      if (name == null || name.isBlank()) {
+        continue;
+      }
+      Optional<RegisteredServer> rs = proxy.getServer(name);
+      if (rs.isPresent()) {
+        return rs;
+      }
     }
-    return proxy.getServer(fallbackServerName);
+    return Optional.empty();
   }
 }

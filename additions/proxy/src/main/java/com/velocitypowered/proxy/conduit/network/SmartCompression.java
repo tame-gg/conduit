@@ -30,8 +30,9 @@ import org.apache.logging.log4j.Logger;
  * <p>Vanilla Velocity compresses every packet above the threshold regardless of whether the data
  * is actually compressible (e.g., image data, already-compressed audio, encrypted payloads).
  * SmartCompression adds a pre-flight byte-saving check using a fast heuristic: it samples the
- * first 128 bytes of the payload to estimate the Shannon entropy.  If entropy is high (≥ 7.0 bits
- * per byte) the payload is almost certainly already compressed or encrypted, and we skip deflation.
+ * first 128 bytes of the payload to estimate the Shannon entropy.  If entropy is high
+ * (≥ {@value #HIGH_ENTROPY_CUTOFF} bits per byte) the payload is almost certainly already
+ * compressed or encrypted, and we skip deflation.
  *
  * <p>For payloads that pass the entropy check but still compress poorly (compressed size within
  * {@code minDeltaBytes} of raw size) the raw payload is sent instead.
@@ -146,36 +147,35 @@ public final class SmartCompression {
       deflater.setInput(inputArray);
       deflater.finish();
 
-      // Allocate an output buffer slightly larger than the input.
-      ByteBuf out = alloc.heapBuffer(rawLen + 32);
-      try {
-        while (!deflater.finished()) {
-          int available = out.writableBytes();
-          if (available < 512) {
-            out.ensureWritable(rawLen);
-            available = out.writableBytes();
-          }
-          int produced = deflater.deflate(
-              out.array(),
-              out.arrayOffset() + out.writerIndex(),
-              available);
-          out.writerIndex(out.writerIndex() + produced);
+      // Deflate into a heap byte[] first so the result is well-defined regardless of whether
+      // the allocator returns a direct or heap buffer.
+      byte[] outBytes = new byte[rawLen + 32];
+      int written = 0;
+      while (!deflater.finished()) {
+        if (written == outBytes.length) {
+          byte[] grown = new byte[outBytes.length * 2];
+          System.arraycopy(outBytes, 0, grown, 0, written);
+          outBytes = grown;
         }
+        written += deflater.deflate(outBytes, written, outBytes.length - written);
+      }
+
+      // Skip if savings do not meet the minimum delta.
+      int delta = rawLen - written;
+      if (delta < ctx.minDeltaBytes) {
+        logger.trace("[Conduit] SmartCompression: compressed {} → {} bytes (delta {}), skipping",
+            rawLen, written, delta);
+        return null;
+      }
+
+      ByteBuf out = alloc.buffer(written);
+      try {
+        out.writeBytes(outBytes, 0, written);
+        return out;
       } catch (Exception e) {
         out.release();
         throw e;
       }
-
-      // Skip if savings do not meet the minimum delta.
-      int delta = rawLen - out.readableBytes();
-      if (delta < ctx.minDeltaBytes) {
-        logger.trace("[Conduit] SmartCompression: compressed {} → {} bytes (delta {}), skipping",
-            rawLen, out.readableBytes(), delta);
-        out.release();
-        return null;
-      }
-
-      return out;
     }
 
     @Override

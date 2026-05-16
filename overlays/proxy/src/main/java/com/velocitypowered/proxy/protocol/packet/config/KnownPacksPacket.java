@@ -37,7 +37,8 @@ public class KnownPacksPacket implements MinecraftPacket {
   // Vanilla Minecraft limit is 64.  Modded clients (NeoForge, Fabric with many mods) routinely
   // exceed this because each mod data-pack entry appears as a separate known pack.
   // Conduit reads the configured limit from ConduitConfig; a JVM property overrides both.
-  static int maxKnownPacks = resolveLimit();
+  // volatile: written by ConduitConfig reload thread, read by Netty I/O threads.
+  static volatile int maxKnownPacks = resolveLimit();
 
   private static final QuietDecoderException TOO_MANY_PACKS =
       new QuietDecoderException("too many known packs");

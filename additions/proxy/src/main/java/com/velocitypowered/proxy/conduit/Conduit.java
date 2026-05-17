@@ -53,7 +53,7 @@ public final class Conduit {
   private static volatile Conduit instance;
 
   private final Path configDir;
-  private final ConduitConfig config;
+  private volatile ConduitConfig config;
   private final ModdedHandshakeCache handshakeCache;
   private final ConnectionThrottler connectionThrottler;
   private final ConduitDiagnostics diagnostics;
@@ -183,6 +183,7 @@ public final class Conduit {
     handshakeCache.setTtlSeconds(newConfig.getHandshakeCacheTtlSeconds());
     connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
     diagnostics.reconfigure(newConfig);
+    config = newConfig;
     logger.info("[Conduit] Reload complete. Note: write-buffer watermarks, health-check interval,"
         + " MOTD TTL, graceful-shutdown, bot-filter, tab-complete cache, and channel-guard"
         + " settings require a proxy restart.");

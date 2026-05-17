@@ -7,7 +7,7 @@ heavily modded Minecraft networks without requiring external plugins. It is 100%
 with existing Velocity plugins and maintains full protocol compatibility with Paper, Spigot,
 Fabric, Forge, and NeoForge backends.
 
-**[Download the latest release →](https://github.com/koelss/conduit/releases/latest)**
+**[Download the latest release →](https://github.com/tame-gg/conduit/releases/latest)**
 
 ---
 
@@ -21,17 +21,17 @@ Fabric, Forge, and NeoForge backends.
 | **Smart compression** | Entropy-based pre-flight check skips compressing already-compressed payloads. |
 | **Configurable write-buffer watermarks** | Tune Netty's backpressure per-deployment in `conduit.toml` instead of recompiling. |
 | **Increased SO_BACKLOG** | Raised from 128 → 1 024 to handle burst logins on large networks. |
-| **Per-IP connection throttle** | Drops TCP connections at the Netty accept stage before any data is read, protecting against bot floods. |
+| **Per-IP connection throttle** | Drops TCP connections at the Netty accept stage before any packet data is read, protecting against bot floods. |
 | **Packet queue manager** | Holds in-flight packets during server switches, preventing state-machine confusion on modded clients. |
 | **Backend health checking** | Pings all registered backends on a configurable interval and marks unhealthy servers so they are skipped by fallback routing. |
 | **Fallback routing on kick** | Automatically redirects kicked players to a healthy fallback server instead of disconnecting them. |
 | **MOTD caching** | Caches server list pings per IP to reduce repeated ping overhead. |
 | **Graceful shutdown** | Transfers connected players to a fallback server (or disconnects with a friendly message) before the proxy exits. |
-| **Bot filter** | Blocks IPs that repeatedly open connections without completing the login handshake. |
+| **Bot filter** | Blocks IPs that repeatedly open TCP channels without completing the initial Minecraft handshake. |
 | **Channel guard** | Intercepts known cheat / exploit plugin-message channels (World-Downloader, X-Ray clients) and applies a drop / kick / log policy. |
 | **Tab-complete cache** | Short-TTL LRU cache for backend tab-completion responses keyed on (server, prefix). Absorbs key-held tab spam at near-zero CPU. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
-| **Operator commands** | `/conduit reload \| diagnostics \| health \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
+| **Operator commands** | `/conduit reload \| diagnostics \| health \| doctor \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
 
 ---
 
@@ -39,10 +39,10 @@ Fabric, Forge, and NeoForge backends.
 
 ### Download
 
-Grab `conduit-<version>.jar` from the [releases page](https://github.com/koelss/conduit/releases/latest) and run it like any Velocity JAR:
+Grab `conduit-<version>.jar` from the [releases page](https://github.com/tame-gg/conduit/releases/latest) and run it like any Velocity JAR:
 
 ```bash
-java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.2.3.jar
+java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.3.0.jar
 ```
 
 On first run, Conduit generates a `conduit.toml` file alongside `velocity.toml` with all settings annotated.
@@ -54,7 +54,7 @@ On first run, Conduit generates a `conduit.toml` file alongside `velocity.toml` 
 #### macOS / Linux
 
 ```bash
-git clone https://github.com/koelss/conduit.git
+git clone https://github.com/tame-gg/conduit.git
 cd conduit
 ./scripts/setup.sh        # clones upstream Velocity and applies Conduit patches
 ./gradlew build           # produces proxy/build/libs/conduit-<version>.jar
@@ -63,7 +63,7 @@ cd conduit
 #### Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/koelss/conduit.git
+git clone https://github.com/tame-gg/conduit.git
 cd conduit
 .\scripts\setup.ps1       # clones upstream Velocity and applies Conduit patches
 .\gradlew.bat build       # produces proxy\build\libs\conduit-<version>.jar
@@ -157,6 +157,7 @@ modlist-enabled                 = true      # registers /modlist  (permission: c
 | `/conduit reload` | Re-reads `conduit.toml` and applies live-tunable values (handshake TTL, throttle rate, diagnostics flags). | `conduit.admin` |
 | `/conduit diagnostics` | Prints the counter snapshot — connections, cache hits, throttles, slow logins, channels blocked, etc. | `conduit.admin` |
 | `/conduit health` | Prints the per-backend health summary (`HEALTHY` / `UNHEALTHY`, failure count, last-checked timestamp). | `conduit.admin` |
+| `/conduit doctor` | Checks Conduit config and feature wiring, including fallback-server names and restart-required/experimental settings. | `conduit.admin` |
 | `/conduit unblock <ip>` | Clears a bot-filter block on the given IP. | `conduit.admin` |
 | `/conduit cache invalidate <ip>` | Drops cached MOTD and modded-handshake entries for the given IP. | `conduit.admin` |
 | `/modlist` | Lists every connected player with their detected mod loader and channel count. | `conduit.modlist` |
@@ -184,6 +185,8 @@ conduit/
 │   └── proxy/src/main/java/com/velocitypowered/proxy/
 │       ├── VelocityServer.java           Conduit.init() wiring, branding
 │       ├── network/ConnectionManager.java
+│       ├── network/ServerChannelInitializer.java
+│       ├── connection/client/HandshakeSessionHandler.java
 │       └── protocol/packet/config/KnownPacksPacket.java
 │
 ├── additions/            ← New files ADDED on top of upstream

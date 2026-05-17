@@ -4,6 +4,29 @@ All changes relative to upstream `PaperMC/Velocity @ dev/3.0.0`.
 
 ---
 
+## 1.3.0 — Release Notes
+
+### Fixed / Implemented
+
+* Wired `ConnectionThrottler` into `ServerChannelInitializer`, so per-IP TCP accept-stage
+  throttling now runs before packet processing.
+* Wired `BotFilter` into the initial channel/handshake path. Connections that never send an
+  initial Minecraft handshake within the configured timeout are now counted and can trigger an
+  IP block.
+* Fixed `/conduit reload` so `Conduit.getConfig()` returns the freshly loaded config after a
+  successful reload instead of the startup snapshot.
+* Added `/conduit doctor`, an operator-facing report for config issues, missing fallback servers,
+  and features that are configured but still need deeper protocol overlays.
+* Added focused tests for config validation, connection throttling, bot filtering, and channel
+  guard matching.
+
+### Release
+
+* Bumped `conduit.version` to `1.3.0`.
+* Updated release links and examples to use the `tame-gg/conduit` repository.
+
+---
+
 ## OVERLAYS — Modified upstream files
 
 These files replace their upstream counterparts.  Each entry lists the file, what changed, and why.
@@ -13,7 +36,7 @@ These files replace their upstream counterparts.  Each entry lists the file, wha
 ### `proxy/src/main/java/com/velocitypowered/proxy/protocol/packet/config/KnownPacksPacket.java`
 
 **Change:** `MAX_KNOWN_PACKS` is no longer a compile-time constant initialised from a JVM system
-property.  It is now a mutable static integer set by `RadarConfig` at startup (and on reload),
+property.  It is now a mutable static integer set by `ConduitConfig` at startup (and on reload),
 with the JVM property (`-Dvelocity.max-known-packs=<n>`) as a higher-priority override.
 
 **Why:** Vanilla Velocity caps the client's known-packs list at 64 entries.  Modded clients
@@ -25,7 +48,7 @@ reflection to mutate the final field at runtime — fragile, noisy on the consol
 whenever Velocity's obfuscation changes the field name.  Integrating it directly:
 
 * Removes the `sun.misc.Unsafe` dependency entirely.
-* Allows live reload via `/radarvelocity reload` without a proxy restart.
+* Allows live reload via `/conduit reload` without a proxy restart.
 * Is transparent to plugin authors — the packet class is otherwise identical.
 
 **Default configured value:** 1 024 (see `conduit.toml → [modded] → max-known-packs`).
@@ -36,7 +59,7 @@ whenever Velocity's obfuscation changes the field name.  Integrating it directly
 
 **Changes:**
 1. `SERVER_WRITE_MARK` (previously hardcoded `WriteBufferWaterMark(1 MiB, 2 MiB)`) is now
-   resolved from `RadarConfig` at bind time, allowing operators to tune memory vs. latency.
+   resolved from `ConduitConfig` at bind time, allowing operators to tune memory vs. latency.
 2. `SO_BACKLOG` set to **1 024** (Netty default: 128).  On large networks that see >500 players
    connecting within a few seconds (e.g., after a vote event), the kernel can now buffer more
    half-open connections before the OS starts dropping them.
@@ -49,6 +72,27 @@ configurable lets experienced operators tune per-deployment.
 
 ---
 
+### `proxy/src/main/java/com/velocitypowered/proxy/network/ServerChannelInitializer.java`
+
+**Change:** Conduit now checks `BotFilter` and `ConnectionThrottler` before constructing the
+Minecraft connection pipeline. Blocked or throttled IPs are closed immediately, and accepted
+channels are tracked for initial-handshake timeout detection.
+
+**Why:** The accept-stage protection classes existed, but they were not previously connected to
+the Netty listener path.
+
+---
+
+### `proxy/src/main/java/com/velocitypowered/proxy/connection/client/HandshakeSessionHandler.java`
+
+**Change:** Completing the initial Minecraft handshake now clears the pending bot-filter marker
+for the remote IP.
+
+**Why:** This prevents legitimate clients and status pings from being counted as incomplete TCP
+opens after the bot-filter timeout elapses.
+
+---
+
 ## ADDITIONS — New files
 
 These files are appended to the project on top of the upstream source.  They do not replace any
@@ -56,13 +100,13 @@ upstream class.
 
 ---
 
-### `com.velocitypowered.proxy.radar` package
+### `com.velocitypowered.proxy.conduit` package
 
 #### `Conduit.java`
 Central lifecycle manager.  Initialised once by the patched `VelocityServer` before any player
 can connect.  Owns references to all Conduit subsystems.
 
-#### `RadarConfig.java`
+#### `ConduitConfig.java`
 Reads `conduit.toml` from the same directory as `velocity.toml`.  Sections:
 - `[modded]` — Known-packs limit, handshake cache, NeoForge/Forge compat flags.
 - `[network]` — Write-buffer watermarks, smart compression, packet-queue settings, connection throttle.
@@ -73,7 +117,7 @@ merged without conflicts.
 
 ---
 
-### `com.velocitypowered.proxy.radar.modded` package
+### `com.velocitypowered.proxy.conduit.modded` package
 
 #### `ModdedHandshakeCache.java`
 LRU cache (max 2 048 entries, configurable TTL) keyed on `(client-IP, mod-fingerprint)`.
@@ -97,7 +141,7 @@ plugin-message channels:
 
 ---
 
-### `com.velocitypowered.proxy.radar.network` package
+### `com.velocitypowered.proxy.conduit.network` package
 
 #### `SmartCompression.java`
 Drop-in enhancement for the compression pipeline.  Before calling DEFLATE, it:
@@ -123,13 +167,13 @@ existing `login-ratelimit` (which acts later, after the handshake packet).
 
 ---
 
-### `com.velocitypowered.proxy.radar.diagnostics` package
+### `com.velocitypowered.proxy.conduit.diagnostics` package
 
-#### `RadarDiagnostics.java`
+#### `ConduitDiagnostics.java`
 Lock-free `LongAdder` counters for all Conduit events (connections, cache hits/misses,
 throttle drops, slow logins, compression skips, queue flushes).  Emits structured log lines when
 `diagnostics.enabled = true` in `conduit.toml`.  Exposes a `buildSummary()` string consumed by
-the `/radarvelocity diagnostics` command.
+the `/conduit diagnostics` command.
 
 ---
 
@@ -212,4 +256,4 @@ are exempt.  Default OFF.
 | Fabric backends | **Full support.** |
 | Legacy Forge (FML1/FML2) | **Improved.** Better handshake logging and address parsing. |
 | NeoForge (FML3) | **Improved.** Handshake caching, oversized-payload protection. |
-| Upstream merge effort | **Low.** Only 2 files overlaid; additions are self-contained. |
+| Upstream merge effort | **Low.** Five files overlaid; additions are self-contained. |

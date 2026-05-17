@@ -38,6 +38,8 @@ for module in api native proxy build-logic config; do
       --exclude='**/KnownPacksPacket.java' \
       --exclude='**/ConnectionManager.java' \
       --exclude='**/VelocityServer.java' \
+      --exclude='**/ServerChannelInitializer.java' \
+      --exclude='**/HandshakeSessionHandler.java' \
       "$UPSTREAM_DIR/$module/" "$ROOT_DIR/$module/"
   fi
 done

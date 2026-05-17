@@ -25,6 +25,7 @@ import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.proxy.conduit.Conduit;
+import com.velocitypowered.proxy.conduit.diagnostics.ConduitDoctor;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import net.kyori.adventure.text.Component;
@@ -60,7 +61,7 @@ public final class ConduitCommand {
 
   /** Registers {@code /conduit} on the proxy command manager. */
   public static void register(ProxyServer proxy, Object plugin) {
-    BrigadierCommand command = new BrigadierCommand(buildNode());
+    BrigadierCommand command = new BrigadierCommand(buildNode(proxy));
     proxy.getCommandManager().register(
         proxy.getCommandManager().metaBuilder("conduit")
             .plugin(plugin)
@@ -69,7 +70,7 @@ public final class ConduitCommand {
     logger.info("[Conduit] Registered /conduit admin command.");
   }
 
-  private static LiteralCommandNode<CommandSource> buildNode() {
+  private static LiteralCommandNode<CommandSource> buildNode(ProxyServer proxy) {
     return BrigadierCommand.literalArgumentBuilder("conduit")
         .requires(source -> source.hasPermission(PERMISSION))
         .executes(ConduitCommand::showUsage)
@@ -79,6 +80,8 @@ public final class ConduitCommand {
             .executes(ConduitCommand::diagnostics))
         .then(BrigadierCommand.literalArgumentBuilder("health")
             .executes(ConduitCommand::health))
+        .then(BrigadierCommand.literalArgumentBuilder("doctor")
+            .executes(ctx -> doctor(ctx, proxy)))
         .then(BrigadierCommand.literalArgumentBuilder("unblock")
             .then(BrigadierCommand.requiredArgumentBuilder("ip", StringArgumentType.string())
                 .executes(ConduitCommand::unblock)))
@@ -99,6 +102,8 @@ public final class ConduitCommand {
         + "— show counter snapshot", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit health                   "
         + "— show backend health", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit doctor                   "
+        + "— check config and feature wiring", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit unblock <ip>             "
         + "— clear a bot-filter block", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit cache invalidate <ip>    "
@@ -129,6 +134,12 @@ public final class ConduitCommand {
   private static int health(CommandContext<CommandSource> ctx) {
     ctx.getSource().sendMessage(Component.text(
         Conduit.get().getHealthChecker().getHealthSummary(), NamedTextColor.AQUA));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int doctor(CommandContext<CommandSource> ctx, ProxyServer proxy) {
+    ctx.getSource().sendMessage(Component.text(
+        ConduitDoctor.buildReport(Conduit.get(), proxy), NamedTextColor.AQUA));
     return Command.SINGLE_SUCCESS;
   }
 

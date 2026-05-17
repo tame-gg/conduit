@@ -149,6 +149,9 @@ public class BotFilter {
     lock.lock();
     try {
       IpRecord rec = records.computeIfAbsent(addr, k -> new IpRecord());
+      if (rec.pendingStart == 0 || now - rec.pendingStart < handshakeTimeoutMs) {
+        return;
+      }
       rec.pendingStart = 0;
       rec.addIncomplete(now);
       rec.lastIncompleteAt = now;

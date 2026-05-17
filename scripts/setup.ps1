@@ -56,7 +56,13 @@ function Mirror-Module {
 # ── 2. Copy upstream source into our project tree ────────────────────────────
 Write-Host "==> Syncing upstream source files..."
 
-$excludeFiles = @("KnownPacksPacket.java", "ConnectionManager.java", "VelocityServer.java")
+$excludeFiles = @(
+    "KnownPacksPacket.java",
+    "ConnectionManager.java",
+    "VelocityServer.java",
+    "ServerChannelInitializer.java",
+    "HandshakeSessionHandler.java"
+)
 
 foreach ($module in @("api", "native", "proxy", "build-logic", "config")) {
     $src = Join-Path $UpstreamDir $module

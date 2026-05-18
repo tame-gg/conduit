@@ -33,6 +33,8 @@ import com.velocitypowered.proxy.conduit.network.TabCompleteCache;
 import com.velocitypowered.proxy.conduit.security.BotFilter;
 import com.velocitypowered.proxy.conduit.security.ChannelGuard;
 import com.velocitypowered.proxy.conduit.shutdown.GracefulShutdown;
+import com.velocitypowered.proxy.conduit.spark.BundledSparkInstaller;
+import com.velocitypowered.proxy.conduit.spark.BundledSparkInstaller.InstallResult;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
@@ -165,6 +167,27 @@ public final class Conduit {
     }
 
     logger.info("[Conduit] All subsystems started against proxy.");
+  }
+
+  /**
+   * Installs Conduit's bundled spark Velocity plugin before Velocity scans the plugins directory.
+   */
+  public void installBundledSpark() {
+    try {
+      InstallResult result = BundledSparkInstaller.install(configDir);
+      switch (result) {
+        case INSTALLED -> logger.info("[Conduit] Bundled spark Velocity plugin installed.");
+        case SKIPPED_EXISTING_SPARK -> logger.info("[Conduit] Existing spark plugin found;"
+            + " bundled spark was not installed.");
+        case SKIPPED_MISSING_RESOURCE -> logger.warn("[Conduit] Bundled spark plugin resource was"
+            + " not found in the Conduit jar.");
+        default -> {
+          // exhaustive
+        }
+      }
+    } catch (IOException e) {
+      logger.warn("[Conduit] Failed to install bundled spark plugin: {}", e.getMessage());
+    }
   }
 
   /**

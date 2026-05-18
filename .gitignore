@@ -1,0 +1,22 @@
+# Local Gradle state
+/.gradle/
+
+# Build output
+/build/
+**/build/
+
+# Upstream Velocity cache and generated working tree
+/.upstream-velocity/
+/api/
+/build-logic/
+/config/
+/native/
+/proxy/
+/gradle/
+/gradlew
+/gradlew.bat
+/HEADER.txt
+
+# Runtime and crash logs
+*.log
+hs_err_pid*.log

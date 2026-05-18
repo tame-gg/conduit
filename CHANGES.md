@@ -17,6 +17,8 @@ All changes relative to upstream `PaperMC/Velocity @ dev/3.0.0`.
   successful reload instead of the startup snapshot.
 * Added `/conduit doctor`, an operator-facing report for config issues, missing fallback servers,
   and features that are configured but still need deeper protocol overlays.
+* Bundled the official `lucko/spark` Velocity plugin. Conduit extracts it into `plugins/` before
+  Velocity loads plugins, unless an operator-managed spark jar is already present.
 * Added focused tests for config validation, connection throttling, bot filtering, and channel
   guard matching.
 

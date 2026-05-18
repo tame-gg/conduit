@@ -10,6 +10,8 @@ actual connection path.
 * `/conduit reload` now refreshes the live `ConduitConfig` snapshot.
 * `/conduit doctor` reports configuration issues, missing fallback servers, and not-yet-wired
   experimental settings.
+* The official `lucko/spark` Velocity plugin is now bundled and installed automatically as
+  `/sparkv` / `/sparkvelocity` unless a spark jar already exists in `plugins/`.
 * Added focused tests for Conduit config validation, throttling, bot filtering, and channel guard
   matching.
 

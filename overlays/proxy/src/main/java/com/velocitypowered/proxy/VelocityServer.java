@@ -292,6 +292,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     this.doStartupConfigLoad();
 
     Conduit.init(Path.of("."));
+    Conduit.get().installBundledSpark();
 
     registerTranslations();
 

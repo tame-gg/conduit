@@ -4,6 +4,46 @@ All changes relative to upstream `GemstoneGG/Velocity-CTD @ dev`.
 
 ---
 
+## Unreleased — Operator Controls and Hot-Path Overlays
+
+### Added
+
+* Added `/conduit metrics json` for structured diagnostics snapshots suitable for scripts,
+  dashboards, and quick operator inspection.
+* Added optional Conduit metrics HTTP serving, backed by `ConduitMetricsServer` and
+  `ConduitMetricsSnapshot`.
+* Added `/conduit attackmode on|off|status`, plus `AttackModePolicy`, so operators can switch
+  stricter protection behavior on during live incidents without editing config by hand.
+* Added `/conduit config diff` using `ConduitConfigDiff`, allowing operators to compare the
+  active config against the default shipped config.
+* Added `/conduit failover test <server>` as a dry-run operator check for fallback routing.
+* Added `ChannelGuardPreset` support so common plugin-channel blocklists can be applied from
+  config without manually copying every channel pattern.
+* Added mod compatibility routing via `ModCompatibilityRules` and `ModCompatibilityRouter` for
+  loader/backend-aware routing decisions.
+* Added hot-path overlays for:
+  * play-session tab-completion caching in `ClientPlaySessionHandler`;
+  * smart compression fallback in `MinecraftCompressorAndLengthEncoder`;
+  * inbound and outbound play packet queue handling during server transitions.
+
+### Changed
+
+* Expanded `conduit.toml` defaults with metrics, attack-mode, channel-guard preset, mod
+  compatibility, packet-queue, and smart-compression controls.
+* Extended `/conduit doctor` and the main Conduit lifecycle wiring so the new subsystems are
+  visible to operators instead of only existing as internal helpers.
+* Updated the README with the new operator controls and configuration examples.
+* Synchronized the generated `proxy/` tree with the new additions and overlays used by CI.
+
+### Fixed
+
+* Fixed Checkstyle failures from import ordering and overloaded-method adjacency in the
+  post-overlay code.
+* Added/updated focused tests for config diffing, metrics snapshots, mod compatibility rules,
+  attack-mode policy, channel-guard presets, and overlay integrity.
+
+---
+
 ## 1.3.0 — Release Notes
 
 ### Fixed / Implemented

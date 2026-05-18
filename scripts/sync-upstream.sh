@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# sync-upstream.sh — Pull the latest upstream Velocity changes and merge them.
-# Run this periodically to keep Conduit current with PaperMC updates.
+# sync-upstream.sh — Pull the latest upstream Velocity-CTD changes and merge them.
+# Run this periodically to keep Conduit current with Velocity-CTD updates.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 UPSTREAM_DIR="$ROOT_DIR/.upstream-velocity"
-UPSTREAM_BRANCH="dev/3.0.0"
+UPSTREAM_BRANCH="dev"
 
 echo "==> Fetching upstream changes..."
+git -C "$UPSTREAM_DIR" remote set-url origin "https://github.com/GemstoneGG/Velocity-CTD.git"
 git -C "$UPSTREAM_DIR" fetch origin "$UPSTREAM_BRANCH"
 
 OLD_HEAD=$(git -C "$UPSTREAM_DIR" rev-parse HEAD)

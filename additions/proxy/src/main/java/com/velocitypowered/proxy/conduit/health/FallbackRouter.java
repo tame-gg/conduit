@@ -120,9 +120,9 @@ public class FallbackRouter {
       if (name.equals(kickedFrom)) {
         continue;
       }
-      Optional<RegisteredServer> rs = proxy.getServer(name);
+      Optional<? extends RegisteredServer> rs = proxy.getServer(name);
       if (rs.isPresent() && healthChecker.isHealthy(rs.get())) {
-        return rs;
+        return Optional.of(rs.get());
       }
     }
     // 2. Try any healthy server that is not the kicked-from server.

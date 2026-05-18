@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2023 Velocity Contributors
+ * Copyright (C) 2018-2026 Velocity Contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,48 +41,70 @@ import io.netty.channel.unix.UnixChannelOption;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.concurrent.MultithreadEventExecutorGroup;
 import java.net.InetSocketAddress;
-import java.net.http.HttpClient;
 import java.util.Collection;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
+import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
+import org.apache.hc.client5.http.config.ConnectionConfig;
+import org.apache.hc.client5.http.config.TlsConfig;
+import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
+import org.apache.hc.client5.http.impl.async.HttpAsyncClients;
+import org.apache.hc.client5.http.impl.nio.PoolingAsyncClientConnectionManager;
+import org.apache.hc.client5.http.impl.nio.PoolingAsyncClientConnectionManagerBuilder;
+import org.apache.hc.core5.concurrent.FutureCallback;
+import org.apache.hc.core5.http2.HttpVersionPolicy;
+import org.apache.hc.core5.io.CloseMode;
+import org.apache.hc.core5.util.TimeValue;
+import org.apache.hc.core5.util.Timeout;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.message.ParameterizedMessageFactory;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Manages endpoints managed by Velocity, along with initializing the Netty event loop group.
- *
- * <p>Conduit: write-buffer watermarks are configurable via conduit.toml instead of being
- * hardcoded.  This allows large-scale networks to tune memory vs. latency trade-offs.
  */
 public final class ConnectionManager {
 
-  // Watermarks are resolved lazily from ConduitConfig so they honour conduit.toml settings.
-  // Fallback to vanilla values (1 MiB low / 2 MiB high) if Conduit is not yet initialised.
   private static WriteBufferWaterMark resolveWriteMark() {
     try {
       ConduitConfig cfg = Conduit.get().getConfig();
       return new WriteBufferWaterMark(cfg.getWriteBufferLowWatermark(),
           cfg.getWriteBufferHighWatermark());
     } catch (IllegalStateException ignored) {
-      // Conduit not yet initialised — use vanilla defaults
       return new WriteBufferWaterMark(1 << 20, 1 << 21);
     }
   }
 
-  private static final Logger LOGGER = LogManager.getLogger(ConnectionManager.class);
+  private static final Logger LOGGER = LogManager.getLogger(ConnectionManager.class, new ParameterizedMessageFactory());
+
   private final Multimap<InetSocketAddress, Endpoint> endpoints = HashMultimap.create();
+
   private final TransportType transportType;
+
   private final EventLoopGroup bossGroup;
+
   private final EventLoopGroup workerGroup;
+
   private final VelocityServer server;
-  // These are intentionally made public for plugins like ViaVersion, which inject their own
-  // protocol logic into the proxy.
-  @SuppressWarnings("WeakerAccess")
+
   public final ServerChannelInitializerHolder serverChannelInitializer;
-  @SuppressWarnings("WeakerAccess")
+
   public final BackendChannelInitializerHolder backendChannelInitializer;
 
   private final SeparatePoolInetNameResolver resolver;
+
+  /**
+   * Shared {@link CloseableHttpAsyncClient} for pooled http connections. Uses Apache HttpClient
+   * because the JDK HTTP/2 client refuses to open additional connections when the server-advertised
+   * concurrent stream limit is hit and fails the request instead
+   * (see <a href="https://bugs.openjdk.org/browse/JDK-8225647">JDK-8225647</a>).
+   */
+  private volatile @MonotonicNonNull CloseableHttpAsyncClient sharedHttpClient;
 
   /**
    * Initializes the {@code ConnectionManager}.
@@ -94,18 +116,14 @@ public final class ConnectionManager {
     this.transportType = TransportType.bestType();
     this.bossGroup = this.transportType.createEventLoopGroup(TransportType.Type.BOSS);
     this.workerGroup = this.transportType.createEventLoopGroup(TransportType.Type.WORKER);
-    this.serverChannelInitializer = new ServerChannelInitializerHolder(
-        new ServerChannelInitializer(server));
-    this.backendChannelInitializer = new BackendChannelInitializerHolder(
-        new BackendChannelInitializer(server));
+    this.serverChannelInitializer = new ServerChannelInitializerHolder(new ServerChannelInitializer(this.server));
+    this.backendChannelInitializer = new BackendChannelInitializerHolder(new BackendChannelInitializer(this.server));
     this.resolver = new SeparatePoolInetNameResolver(GlobalEventExecutor.INSTANCE);
   }
 
-  /** Logs the channel type, compression, and cipher variants in use. */
   public void logChannelInformation() {
-    LOGGER.info("Connections will use {} channels, {} compression, {} ciphers",
-        this.transportType, Natives.compress.getLoadedVariant(),
-        Natives.cipher.getLoadedVariant());
+    LOGGER.info("Connections will use {} channels, {} compression, {} ciphers", this.transportType,
+        Natives.compress.getLoadedVariant(), Natives.cipher.getLoadedVariant());
   }
 
   /**
@@ -113,16 +131,15 @@ public final class ConnectionManager {
    *
    * @param address the address to bind to
    */
-  public void bind(final InetSocketAddress address) {
+  public void bind(InetSocketAddress address) {
     WriteBufferWaterMark writeMark = resolveWriteMark();
 
-    final ServerBootstrap bootstrap = new ServerBootstrap()
+    ServerBootstrap bootstrap = new ServerBootstrap()
         .channelFactory(this.transportType.serverSocketChannelFactory)
         .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, writeMark)
         .childHandler(this.serverChannelInitializer.get())
         .childOption(ChannelOption.TCP_NODELAY, true)
         .childOption(ChannelOption.IP_TOS, 0x18)
-        // Conduit: 1024 vs upstream 128 — handles burst connections on large networks.
         .option(ChannelOption.SO_BACKLOG, 1024)
         .localAddress(address);
 
@@ -132,13 +149,12 @@ public final class ConnectionManager {
 
     if (server.getConfiguration().isEnableReusePort()) {
       // We don't need a boss group, since each worker will bind to the socket
-      bootstrap.option(UnixChannelOption.SO_REUSEPORT, true)
-          .group(this.workerGroup);
+      bootstrap.option(UnixChannelOption.SO_REUSEPORT, true).group(this.workerGroup);
     } else {
       bootstrap.group(this.bossGroup, this.workerGroup);
     }
 
-    final int binds = server.getConfiguration().isEnableReusePort()
+    int binds = server.getConfiguration().isEnableReusePort()
         ? ((MultithreadEventExecutorGroup) this.workerGroup).executorCount() : 1;
 
     LOGGER.info("[Conduit] Binding {} (write-buffer {}/{} KiB, backlog 1024)",
@@ -147,28 +163,34 @@ public final class ConnectionManager {
         writeMark.high() / 1024);
 
     for (int bind = 0; bind < binds; bind++) {
+      // Wait for each bind to open. If we encounter any errors, don't try to bind again.
       int finalBind = bind;
       ChannelFuture f = bootstrap.bind()
           .addListener((ChannelFutureListener) future -> {
-            final Channel channel = future.channel();
+            Channel channel = future.channel();
             if (future.isSuccess()) {
               this.endpoints.put(address, new Endpoint(channel, ListenerType.MINECRAFT));
+
               LOGGER.info("Listening on {}", channel.localAddress());
 
               if (finalBind == 0) {
+                // Warn people with console access that HAProxy is in use, see PR: #1436
                 if (this.server.getConfiguration().isProxyProtocol()) {
                   LOGGER.warn(
-                      "Using HAProxy and listening on {}, please ensure this listener is "
-                          + "adequately firewalled.", channel.localAddress());
+                      "Using HAProxy and listening on {}, please ensure this listener is adequately firewalled.",
+                      channel.localAddress());
                 }
-                server.getEventManager().fireAndForget(
-                    new ListenerBoundEvent(address, ListenerType.MINECRAFT));
+
+                // Fire the proxy bound event after the socket is bound
+                server.getEventManager().fireAndForget(new ListenerBoundEvent(address, ListenerType.MINECRAFT));
               }
             } else {
               LOGGER.error("Can't bind to {}", address, future.cause());
             }
           });
+
       f.syncUninterruptibly();
+
       if (!f.isSuccess()) {
         break;
       }
@@ -181,19 +203,21 @@ public final class ConnectionManager {
    * @param hostname the hostname to bind to
    * @param port     the port to bind to
    */
-  public void queryBind(final String hostname, final int port) {
+  public void queryBind(String hostname, int port) {
     InetSocketAddress address = new InetSocketAddress(hostname, port);
-    final Bootstrap bootstrap = new Bootstrap()
+    Bootstrap bootstrap = new Bootstrap()
         .channelFactory(this.transportType.datagramChannelFactory)
         .group(this.workerGroup)
         .handler(new GameSpyQueryHandler(this.server))
         .localAddress(address);
     bootstrap.bind()
         .addListener((ChannelFutureListener) future -> {
-          final Channel channel = future.channel();
+          Channel channel = future.channel();
           if (future.isSuccess()) {
             this.endpoints.put(address, new Endpoint(channel, ListenerType.QUERY));
             LOGGER.info("Listening for GS4 query on {}", channel.localAddress());
+
+            // Fire the proxy bound event after the socket is bound
             server.getEventManager().fireAndForget(
                 new ListenerBoundEvent(address, ListenerType.QUERY));
           } else {
@@ -219,6 +243,7 @@ public final class ConnectionManager {
     if (server.getConfiguration().useTcpFastOpen()) {
       bootstrap.option(ChannelOption.TCP_FASTOPEN_CONNECT, true);
     }
+
     return bootstrap;
   }
 
@@ -232,6 +257,9 @@ public final class ConnectionManager {
     Preconditions.checkState(!endpoints.isEmpty(), "Endpoint was not registered");
 
     ListenerType type = endpoints.iterator().next().getType();
+
+    // Fire proxy close event to notify plugins of socket close. We block since plugins
+    // should have a chance to be notified before the server stops accepting connections.
     server.getEventManager().fire(new ListenerCloseEvent(oldBind, type)).join();
 
     for (Endpoint endpoint : endpoints) {
@@ -247,12 +275,13 @@ public final class ConnectionManager {
    * @param interrupt should closing forward interruptions
    */
   public void closeEndpoints(boolean interrupt) {
-    for (final Map.Entry<InetSocketAddress, Collection<Endpoint>> entry : this.endpoints.asMap()
-        .entrySet()) {
-      final InetSocketAddress address = entry.getKey();
-      final Collection<Endpoint> endpoints = entry.getValue();
+    for (Map.Entry<InetSocketAddress, Collection<Endpoint>> entry : this.endpoints.asMap().entrySet()) {
+      InetSocketAddress address = entry.getKey();
+      Collection<Endpoint> endpoints = entry.getValue();
       ListenerType type = endpoints.iterator().next().getType();
 
+      // Fire proxy close event to notify plugins of socket close. We block since plugins
+      // should have a chance to be notified before the server stops accepting connections.
       server.getEventManager().fire(new ListenerCloseEvent(address, type)).join();
 
       for (Endpoint endpoint : endpoints) {
@@ -260,7 +289,7 @@ public final class ConnectionManager {
         if (interrupt) {
           try {
             endpoint.getChannel().close().sync();
-          } catch (final InterruptedException e) {
+          } catch (InterruptedException e) {
             LOGGER.info("Interrupted whilst closing endpoint", e);
             Thread.currentThread().interrupt();
           }
@@ -269,13 +298,22 @@ public final class ConnectionManager {
         }
       }
     }
+
     this.endpoints.clear();
   }
 
-  /** Closes all endpoints. */
+  /**
+   * Closes all endpoints.
+   */
   public void shutdown() {
     this.closeEndpoints(true);
+
     this.resolver.shutdown();
+
+    CloseableHttpAsyncClient httpClient = this.sharedHttpClient;
+    if (httpClient != null) {
+      httpClient.close(CloseMode.GRACEFUL);
+    }
   }
 
   public EventLoopGroup getBossGroup() {
@@ -286,11 +324,71 @@ public final class ConnectionManager {
     return this.serverChannelInitializer;
   }
 
-  @SuppressWarnings("checkstyle:MissingJavadocMethod")
-  public HttpClient createHttpClient() {
-    return HttpClient.newBuilder()
-        .executor(this.workerGroup)
+  public CompletableFuture<SimpleHttpResponse> sendAsync(SimpleHttpRequest request) {
+    CompletableFuture<SimpleHttpResponse> future = new CompletableFuture<>();
+    Future<SimpleHttpResponse> handle = getSharedHttpClient().execute(request, new FutureCallback<>() {
+      @Override
+      public void completed(SimpleHttpResponse result) {
+        future.complete(result);
+      }
+
+      @Override
+      public void failed(Exception ex) {
+        future.completeExceptionally(ex);
+      }
+
+      @Override
+      public void cancelled() {
+        future.cancel(false);
+      }
+    });
+
+    future.whenComplete((r, ex) -> {
+      if (future.isCancelled()) {
+        handle.cancel(true);
+      }
+    });
+
+    return future;
+  }
+
+  @EnsuresNonNull("sharedHttpClient")
+  public CloseableHttpAsyncClient getSharedHttpClient() {
+    if (sharedHttpClient == null) {
+      synchronized (this) {
+        if (sharedHttpClient == null) { // check again in lock
+          sharedHttpClient = createHttpClient();
+        }
+      }
+    }
+    return sharedHttpClient;
+  }
+
+  private CloseableHttpAsyncClient createHttpClient() {
+    PoolingAsyncClientConnectionManager connectionManager =
+        PoolingAsyncClientConnectionManagerBuilder.create()
+            .setDefaultConnectionConfig(ConnectionConfig.custom()
+                .setConnectTimeout(Timeout.ofSeconds(15))
+                .setSocketTimeout(Timeout.ofSeconds(30))
+                .setTimeToLive(TimeValue.ofMinutes(5))
+                .build())
+            .setDefaultTlsConfig(TlsConfig.custom()
+                .setVersionPolicy(HttpVersionPolicy.NEGOTIATE)
+                .build())
+            .setMaxConnPerRoute(8)
+            .setMaxConnTotal(32)
+            .build();
+
+    CloseableHttpAsyncClient client = HttpAsyncClients.custom()
+        .setConnectionManager(connectionManager)
+        .setUserAgent(server.getVersion().getName() + "/" + server.getVersion().getVersion())
+        .useSystemProperties()
+        .evictExpiredConnections()
+        .evictIdleConnections(TimeValue.ofSeconds(60))
         .build();
+    client.start();
+
+    return client;
   }
 
   public BackendChannelInitializerHolder getBackendChannelInitializer() {

@@ -6,8 +6,15 @@ plugins {
 
 subprojects {
     apply<JavaLibraryPlugin>()
+
     apply(plugin = "velocity-checkstyle")
     apply(plugin = "velocity-spotless")
+
+    plugins.withId("checkstyle") {
+        extensions.configure<CheckstyleExtension> {
+            configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+        }
+    }
 
     java {
         toolchain {
@@ -25,6 +32,14 @@ subprojects {
             testTask.configure {
                 reports.junitXml.required = true
             }
+        }
+    }
+}
+
+project(":velocity-proxy") {
+    plugins.withId("checkstyle") {
+        extensions.configure<CheckstyleExtension> {
+            configFile = rootProject.file("config/checkstyle/checkstyle-lenient-comments.xml")
         }
     }
 }

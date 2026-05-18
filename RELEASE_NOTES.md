@@ -5,6 +5,8 @@ actual connection path.
 
 ## Highlights
 
+* Rebased Conduit from PaperMC Velocity `dev/3.0.0` onto GemstoneGG Velocity-CTD `dev`, preserving
+  CTD's Redis, queue, command, HTTP client, and LuckPerms integration surfaces.
 * Per-IP connection throttling now runs in `ServerChannelInitializer` before packet processing.
 * Bot filtering now tracks TCP channels that never complete the initial Minecraft handshake.
 * `/conduit reload` now refreshes the live `ConduitConfig` snapshot.

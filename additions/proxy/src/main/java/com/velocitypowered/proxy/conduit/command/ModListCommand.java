@@ -133,7 +133,7 @@ public final class ModListCommand {
   private static int showPlayer(CommandContext<CommandSource> ctx, ProxyServer proxy) {
     CommandSource source = ctx.getSource();
     String name = StringArgumentType.getString(ctx, "player");
-    Optional<Player> playerOpt = proxy.getPlayer(name);
+    Optional<? extends Player> playerOpt = proxy.getPlayer(name);
     if (playerOpt.isEmpty()) {
       source.sendMessage(Component.text(
           "Player not found: " + name, NamedTextColor.RED));

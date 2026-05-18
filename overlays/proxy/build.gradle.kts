@@ -1,5 +1,4 @@
 import com.github.jengelman.gradle.plugins.shadow.transformers.Log4j2PluginsCacheFileTransformer
-import io.papermc.fill.model.BuildChannel
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -7,9 +6,9 @@ import java.security.MessageDigest
 
 plugins {
     application
+    id("velocity-ctd-publish")
     id("velocity-init-manifest")
     alias(libs.plugins.shadow)
-    alias(libs.plugins.fill)
 }
 
 application {
@@ -61,15 +60,13 @@ tasks.processResources {
 }
 
 tasks {
-    withType<Checkstyle> {
-        exclude("**/com/velocitypowered/proxy/protocol/packet/**")
-    }
-
     jar {
         manifest {
-            attributes["Implementation-Title"] = "Velocity"
-            attributes["Implementation-Vendor"] = "Velocity Contributors"
+            attributes["Implementation-Title"] = "Velocity-CTD"
+            attributes["Implementation-Vendor"] = "Velocity(-CTD) Contributors"
             attributes["Multi-Release"] = "true"
+            attributes["Enable-Native-Access"] = "ALL-UNNAMED"
+            attributes["Enable-Final-Field-Mutation"] = "ALL-UNNAMED"
         }
     }
 
@@ -80,7 +77,7 @@ tasks {
 
         transform(Log4j2PluginsCacheFileTransformer::class.java)
 
-        // Exclude all the collection types we don"t intend to use
+        // Exclude all the collection types we don't intend to use
         exclude("it/unimi/dsi/fastutil/booleans/**")
         exclude("it/unimi/dsi/fastutil/bytes/**")
         exclude("it/unimi/dsi/fastutil/chars/**")
@@ -89,7 +86,7 @@ tasks {
         exclude("it/unimi/dsi/fastutil/longs/**")
         exclude("it/unimi/dsi/fastutil/shorts/**")
 
-        // Exclude the fastutil IO utilities - we don"t use them.
+        // Exclude the fastutil IO utilities - we don't use them.
         exclude("it/unimi/dsi/fastutil/io/**")
 
         // Exclude most of the int types - Object2IntMap have a values() method that returns an
@@ -148,6 +145,16 @@ tasks {
         val configurateBuildTask = project(":deprecated-configurate3").tasks.named("shadowJar")
         dependsOn(configurateBuildTask)
         from(zipTree(configurateBuildTask.map { it.outputs.files.singleFile }))
+
+        // Embed :velocity-luckperms-integration as META-INF/velocityctd/integrations/velocity-luckperms-integration.jar
+        val lpJar = project(":velocity-luckperms-integration")
+            .tasks
+            .named<Jar>("jar")
+        dependsOn(lpJar)
+        from(lpJar.flatMap { it.archiveFile }) {
+            into("META-INF/velocityctd/integrations")
+            rename { "velocity-luckperms-integration.jar" }
+        }
     }
 
     runShadow {
@@ -159,23 +166,14 @@ tasks {
         workingDir = file("run").also(File::mkdirs)
         standardInput = System.`in` // Doesn't work?
     }
-}
 
-val projectVersion = version as String
-fill {
-    project("velocity")
-
-    build {
-        channel = BuildChannel.STABLE
-        versionFamily("3.0.0")
-        version(projectVersion)
-
-        downloads {
-            register("server:default") {
-                file = tasks.shadowJar.flatMap { it.archiveFile }
-                nameResolver.set { project, _, version, build -> "$project-$version-$build.jar" }
-            }
-        }
+    withType<JavaCompile>().configureEach {
+        options.compilerArgs.addAll(
+            listOf(
+                "-Alog4j.graalvm.groupId=${project.group}",
+                "-Alog4j.graalvm.artifactId=${project.name}"
+            )
+        )
     }
 }
 
@@ -199,9 +197,14 @@ dependencies {
     implementation(variantOf(libs.netty.transport.native.kqueue) { classifier("osx-x86_64") })
     implementation(variantOf(libs.netty.transport.native.kqueue) { classifier("osx-aarch_64") })
 
+    implementation(libs.lettuce.core)
+    implementation(libs.httpclient5)
     implementation(libs.jopt)
     implementation(libs.terminalconsoleappender)
-    runtimeOnly(libs.jline)
+    implementation(libs.jline.terminal)
+    implementation(libs.jline.reader)
+    runtimeOnly(libs.jline.terminal.jni)
+    runtimeOnly(libs.jline.terminal.ffm)
     runtimeOnly(libs.disruptor)
     implementation(libs.fastutil)
     implementation(platform(libs.adventure.bom))

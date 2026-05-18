@@ -80,7 +80,7 @@ public final class GracefulShutdown {
    * @param proxy the proxy server
    */
   public void shutdown(ProxyServer proxy) {
-    Collection<Player> players = proxy.getAllPlayers();
+    Collection<? extends Player> players = proxy.getAllPlayers();
     if (players.isEmpty()) {
       logger.info("[Conduit] GracefulShutdown: no players connected; exiting immediately.");
       return;
@@ -139,9 +139,9 @@ public final class GracefulShutdown {
       if (name == null || name.isBlank()) {
         continue;
       }
-      Optional<RegisteredServer> rs = proxy.getServer(name);
+      Optional<? extends RegisteredServer> rs = proxy.getServer(name);
       if (rs.isPresent()) {
-        return rs;
+        return Optional.of(rs.get());
       }
     }
     return Optional.empty();

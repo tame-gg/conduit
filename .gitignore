@@ -10,12 +10,14 @@
 /api/
 /build-logic/
 /config/
+/luckperms-integration/
 /native/
 /proxy/
 /gradle/
 /gradlew
 /gradlew.bat
 /HEADER.txt
+/HEADER-CTD.txt
 
 # Runtime and crash logs
 *.log

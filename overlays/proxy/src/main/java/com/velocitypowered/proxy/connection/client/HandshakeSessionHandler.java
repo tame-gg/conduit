@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2023 Velocity Contributors
+ * Copyright (C) 2018-2026 Velocity Contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,13 +19,13 @@ package com.velocitypowered.proxy.connection.client;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.velocityctd.api.event.connection.ConnectionEstablishEvent;
 import com.velocitypowered.api.event.connection.ConnectionHandshakeEvent;
 import com.velocitypowered.api.network.HandshakeIntent;
 import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.conduit.Conduit;
-import com.velocitypowered.proxy.config.PlayerInfoForwarding;
 import com.velocitypowered.proxy.connection.ConnectionType;
 import com.velocitypowered.proxy.connection.ConnectionTypes;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
@@ -46,9 +46,11 @@ import java.net.InetSocketAddress;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.minimessage.translation.Argument;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * The initial handler used when a connection is established to the proxy. This will either
@@ -60,18 +62,31 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
   private static final Logger LOGGER = LogManager.getLogger(HandshakeSessionHandler.class);
 
   private final MinecraftConnection connection;
+
   private final VelocityServer server;
+
+  /**
+   * The configured minimum version string used to validate connecting clients.
+   */
+  private final String minimumVersion;
+
+  /**
+   * The configured maximum version string used to validate connecting clients.
+   */
+  private final String maximumVersion;
 
   public HandshakeSessionHandler(MinecraftConnection connection, VelocityServer server) {
     this.connection = Preconditions.checkNotNull(connection, "connection");
     this.server = Preconditions.checkNotNull(server, "server");
+    this.minimumVersion = server.getConfiguration().getMinimumVersion();
+    this.maximumVersion = server.getConfiguration().getMaximumVersion()
+        .orElse(ProtocolVersion.MAXIMUM_VERSION.getMostRecentSupportedVersion());
   }
 
   @Override
   public boolean handle(LegacyPingPacket packet) {
     connection.setProtocolVersion(ProtocolVersion.LEGACY);
-    final StatusSessionHandler handler =
-        new StatusSessionHandler(server, new LegacyInboundConnection(connection, packet));
+    StatusSessionHandler handler = new StatusSessionHandler(server, new LegacyInboundConnection(connection, packet));
     connection.setActiveSessionHandler(StateRegistry.STATUS, handler);
     handler.handle(packet);
     return true;
@@ -83,34 +98,46 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
         "Your client is extremely old. Please update to a newer version of Minecraft.",
         NamedTextColor.RED)
     ));
+
     return true;
   }
 
   @Override
-  public boolean handle(final HandshakePacket handshake) {
-    final StateRegistry nextState = getStateForProtocol(handshake.getNextStatus());
+  public boolean handle(HandshakePacket handshake) {
+    StateRegistry nextState = getStateForProtocol(handshake.getNextStatus());
     if (nextState == null) {
       LOGGER.error("{} provided invalid protocol {}", this, handshake.getNextStatus());
       connection.close(true);
     } else {
-      final InitialInboundConnection ic = new InitialInboundConnection(connection,
-              cleanVhost(handshake.getServerAddress()), handshake);
-      if (handshake.getIntent() == HandshakeIntent.TRANSFER
-              && !server.getConfiguration().isAcceptTransfers()) {
-        ic.disconnect(Component.translatable("multiplayer.disconnect.transfers_disabled"));
-        return true;
-      }
-      connection.setProtocolVersion(handshake.getProtocolVersion());
-      connection.setAssociation(ic);
+      InitialInboundConnection ic = new InitialInboundConnection(connection, cleanVhost(handshake.getServerAddress()), handshake);
+      // Handle connection establish event.
+      connection.setAutoReading(false);
+      server.getEventManager()
+          .fire(new ConnectionEstablishEvent(ic, handshake.getIntent()))
+          .thenAccept(result -> {
+            // Clean up the disabling of auto-read.
+            connection.setAutoReading(true);
 
-      switch (nextState) {
-        case STATUS -> connection.setActiveSessionHandler(StateRegistry.STATUS,
-              new StatusSessionHandler(server, ic));
-        case LOGIN -> this.handleLogin(handshake, ic);
-        default ->
-          // If you get this, it's a bug in Velocity.
-          throw new AssertionError("getStateForProtocol provided invalid state!");
-      }
+            if (!result.getResult().isAllowed()) {
+              connection.close(true);
+            } else {
+              if (handshake.getIntent() == HandshakeIntent.TRANSFER && !server.getConfiguration().isAcceptTransfers()) {
+                ic.disconnect(Component.translatable("multiplayer.disconnect.transfers_disabled"));
+                return;
+              }
+
+              connection.setProtocolVersion(handshake.getProtocolVersion());
+              connection.setAssociation(ic);
+
+              switch (nextState) {
+                case STATUS -> connection.setActiveSessionHandler(StateRegistry.STATUS, new StatusSessionHandler(server, ic));
+                case LOGIN -> this.handleLogin(handshake, ic);
+                default ->
+                // If you get this, it's a bug in Velocity.
+                throw new AssertionError("getStateForProtocol provided invalid state!");
+              }
+            }
+          });
     }
 
     return true;
@@ -125,51 +152,52 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
   }
 
   private void handleLogin(HandshakePacket handshake, InitialInboundConnection ic) {
-    final InetAddress address = ((InetSocketAddress) connection.getRemoteAddress()).getAddress();
-    Conduit.get().getBotFilter().recordHandshakeComplete(address);
-
     if (!handshake.getProtocolVersion().isSupported()) {
-      // Bump connection into correct protocol state so that we can send the disconnect packet.
+      // Bump connection into the correct protocol state so that we can send the disconnect packet.
+      // By choice, instead of returning the standard disconnection message, we return the modern
+      // forwarder. This particular value cannot adequately log the user's username; thus, forcing
+      // us to deactivate logging altogether, unlike in the AuthSessionHandler, where logging is by choice.
       connection.setState(StateRegistry.LOGIN);
-      ic.disconnectQuietly(Component.translatable(
-          "multiplayer.disconnect.outdated_client",
-          Component.text(ProtocolVersion.SUPPORTED_VERSION_STRING)
-      ));
+      ic.disconnectQuietly(Component.translatable("velocity.error.modern-forwarding-needs-new-client")
+          .arguments(
+              Argument.string("min", minimumVersion),
+              Argument.string("max", maximumVersion)));
       return;
     }
 
+    InetAddress address = ((InetSocketAddress) connection.getRemoteAddress()).getAddress();
+    Conduit.get().getBotFilter().recordHandshakeComplete(address);
+
     if (!server.getIpAttemptLimiter().attempt(address)) {
-      // Bump connection into correct protocol state so that we can send the disconnect packet.
+      // Bump connection into the correct protocol state so that we can send the disconnect packet.
       connection.setState(StateRegistry.LOGIN);
       ic.disconnectQuietly(Component.translatable("velocity.error.logging-in-too-fast"));
       return;
     }
 
-    connection.setType(getHandshakeConnectionType(handshake));
+    connection.setType(this.getHandshakeConnectionType(handshake));
 
-    // If the proxy is configured for modern forwarding, we must deny connections from 1.12.2
-    // and lower, otherwise IP information will never get forwarded.
-    if (server.getConfiguration().getPlayerInfoForwardingMode() == PlayerInfoForwarding.MODERN
-        && handshake.getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_13)) {
-      // Bump connection into correct protocol state so that we can send the disconnect packet.
-      connection.setState(StateRegistry.LOGIN);
-      ic.disconnectQuietly(
-          Component.translatable("velocity.error.modern-forwarding-needs-new-client"));
-      return;
-    }
+    // Note: We defer the modern forwarding version check until we actually know which server
+    // the player is connecting to. This allows 1.7 clients to connect to servers using legacy forwarding
+    // even when the global default is modern forwarding.
 
-    final LoginInboundConnection lic = new LoginInboundConnection(ic);
-    server.getEventManager().fireAndForget(
-            new ConnectionHandshakeEvent(lic, handshake.getIntent()));
+    LoginInboundConnection lic = new LoginInboundConnection(ic);
+    server.getEventManager().fireAndForget(new ConnectionHandshakeEvent(lic, handshake.getIntent()));
     connection.setActiveSessionHandler(StateRegistry.LOGIN,
         new InitialLoginSessionHandler(server, connection, lic));
   }
 
   private ConnectionType getHandshakeConnectionType(HandshakePacket handshake) {
+
+    if (server.getConfiguration().isDisableForge()) {
+      return ConnectionTypes.VANILLA;
+    }
+
     if (handshake.getServerAddress().contains(ModernForgeConstants.MODERN_FORGE_TOKEN)
             && handshake.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_20_2)) {
       return new ModernForgeConnectionType(handshake.getServerAddress());
     }
+
     // Determine if we're using Forge (1.8 to 1.12, may not be the case in 1.13).
     if (handshake.getServerAddress().endsWith(LegacyForgeConstants.HANDSHAKE_HOSTNAME_TOKEN)
         && handshake.getProtocolVersion().lessThan(ProtocolVersion.MINECRAFT_1_13)) {
@@ -206,6 +234,7 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
     if (!cleaned.isEmpty() && cleaned.charAt(cleaned.length() - 1) == '.') {
       cleaned = cleaned.substring(0, cleaned.length() - 1);
     }
+
     return cleaned;
   }
 
@@ -223,18 +252,13 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public String toString() {
-    final boolean isPlayerAddressLoggingEnabled = connection.server.getConfiguration()
-            .isPlayerAddressLoggingEnabled();
-    final String playerIp =
-            isPlayerAddressLoggingEnabled
-                    ? this.connection.getRemoteAddress().toString() : "<ip address withheld>";
+    boolean isPlayerAddressLoggingEnabled = connection.server.getConfiguration().isPlayerAddressLoggingEnabled();
+    String playerIp = isPlayerAddressLoggingEnabled ? this.connection.getRemoteAddress().toString() : "<ip address withheld>";
     return "[initial connection] " + playerIp;
   }
 
-  private record LegacyInboundConnection(
-          MinecraftConnection connection,
-          LegacyPingPacket ping
-  ) implements VelocityInboundConnection {
+  private record LegacyInboundConnection(MinecraftConnection connection,
+                                         LegacyPingPacket ping) implements VelocityInboundConnection {
 
     @Override
     public InetSocketAddress getRemoteAddress() {
@@ -262,12 +286,9 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
     }
 
     @Override
-    public String toString() {
-      final boolean isPlayerAddressLoggingEnabled = connection.server.getConfiguration()
-          .isPlayerAddressLoggingEnabled();
-      final String playerIp =
-          isPlayerAddressLoggingEnabled
-              ? this.getRemoteAddress().toString() : "<ip address withheld>";
+    public @NotNull String toString() {
+      boolean isPlayerAddressLoggingEnabled = connection.server.getConfiguration().isPlayerAddressLoggingEnabled();
+      String playerIp = isPlayerAddressLoggingEnabled ? this.getRemoteAddress().toString() : "<ip address withheld>";
       return "[legacy connection] " + playerIp;
     }
 

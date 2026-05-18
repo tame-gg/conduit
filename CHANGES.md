@@ -1,6 +1,6 @@
 # Conduit — Change Log
 
-All changes relative to upstream `PaperMC/Velocity @ dev/3.0.0`.
+All changes relative to upstream `GemstoneGG/Velocity-CTD @ dev`.
 
 ---
 
@@ -8,6 +8,8 @@ All changes relative to upstream `PaperMC/Velocity @ dev/3.0.0`.
 
 ### Fixed / Implemented
 
+* Rebased Conduit from PaperMC Velocity `dev/3.0.0` onto GemstoneGG Velocity-CTD `dev`, preserving
+  CTD's Redis, queue, command, HTTP client, and LuckPerms integration surfaces.
 * Wired `ConnectionThrottler` into `ServerChannelInitializer`, so per-IP TCP accept-stage
   throttling now runs before packet processing.
 * Wired `BotFilter` into the initial channel/handshake path. Connections that never send an

@@ -1,4 +1,4 @@
-# setup.ps1 — Clones upstream Velocity, applies Conduit overlays, and prepares the build tree.
+# setup.ps1 — Clones upstream Velocity-CTD, applies Conduit overlays, and prepares the build tree.
 # Run this once before building on Windows: .\scripts\setup.ps1
 # Requires: Git, Java 21+
 
@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir    = Split-Path -Parent $ScriptDir
-$UpstreamRepo   = "https://github.com/PaperMC/Velocity.git"
-$UpstreamBranch = "dev/3.0.0"
+$UpstreamRepo   = "https://github.com/GemstoneGG/Velocity-CTD.git"
+$UpstreamBranch = "dev"
 $UpstreamDir    = Join-Path $RootDir ".upstream-velocity"
 
 Write-Host "==> Conduit setup"
@@ -20,10 +20,11 @@ Write-Host ""
 # ── 1. Clone or update upstream ──────────────────────────────────────────────
 if (Test-Path (Join-Path $UpstreamDir ".git")) {
     Write-Host "==> Updating cached upstream clone..."
+    git -C $UpstreamDir remote set-url origin $UpstreamRepo
     git -C $UpstreamDir fetch --depth=1 origin $UpstreamBranch
     git -C $UpstreamDir checkout FETCH_HEAD
 } else {
-    Write-Host "==> Cloning upstream Velocity (depth=1)..."
+    Write-Host "==> Cloning upstream Velocity-CTD (depth=1)..."
     git clone --depth=1 --branch $UpstreamBranch $UpstreamRepo $UpstreamDir
 }
 
@@ -64,7 +65,7 @@ $excludeFiles = @(
     "HandshakeSessionHandler.java"
 )
 
-foreach ($module in @("api", "native", "proxy", "build-logic", "config")) {
+foreach ($module in @("api", "native", "proxy", "luckperms-integration", "build-logic", "config")) {
     $src = Join-Path $UpstreamDir $module
     $dst = Join-Path $RootDir $module
     if (Test-Path $src) {
@@ -72,11 +73,12 @@ foreach ($module in @("api", "native", "proxy", "build-logic", "config")) {
     }
 }
 
-# Copy top-level Gradle files from upstream if they don't exist locally
-foreach ($f in @("gradlew", "gradlew.bat", "gradle", "HEADER.txt", "LICENSE")) {
+# Copy upstream-owned Gradle support files into the generated working tree.
+foreach ($f in @("gradlew", "gradlew.bat", "gradle", "HEADER.txt", "HEADER-CTD.txt")) {
     $srcPath = Join-Path $UpstreamDir $f
     $dstPath = Join-Path $RootDir $f
-    if ((Test-Path $srcPath) -and (-not (Test-Path $dstPath))) {
+    if (Test-Path $srcPath) {
+        Remove-Item -Recurse -Force $dstPath -ErrorAction SilentlyContinue
         Copy-Item -Recurse $srcPath $dstPath
     }
 }

@@ -1,11 +1,11 @@
 # Conduit
 
-> A performance-focused, modded-network-ready fork of [Velocity](https://github.com/PaperMC/Velocity) by PaperMC.
+> A performance-focused, modded-network-ready fork of [Velocity-CTD](https://github.com/GemstoneGG/Velocity-CTD).
 
-Conduit is built directly on the Velocity `dev/3.0.0` branch and adds native support for
-heavily modded Minecraft networks without requiring external plugins. It is 100% API-compatible
-with existing Velocity plugins and maintains full protocol compatibility with Paper, Spigot,
-Fabric, Forge, and NeoForge backends.
+Conduit is built directly on Velocity-CTD `dev` and layers Conduit’s modded-network
+optimizations on top of CTD’s Redis, queue, command, and LuckPerms integration work. It remains
+compatible with existing Velocity plugins and targets Paper, Spigot, Fabric, Forge, and NeoForge
+backends.
 
 **[Download the latest release →](https://github.com/tame-gg/conduit/releases/latest)**
 
@@ -40,10 +40,10 @@ Fabric, Forge, and NeoForge backends.
 
 ### Download
 
-Grab `conduit-<version>.jar` from the [releases page](https://github.com/tame-gg/conduit/releases/latest) and run it like any Velocity JAR:
+Grab the release jar from the [releases page](https://github.com/tame-gg/conduit/releases/latest) and run it like any Velocity JAR:
 
 ```bash
-java -Xms512m -Xmx512m -XX:+UseG1GC -jar conduit-1.3.0.jar
+java -Xms512m -Xmx512m -XX:+UseG1GC -jar velocity-proxy-3.5.0-CONDUIT-SNAPSHOT-all.jar
 ```
 
 On first run, Conduit generates a `conduit.toml` file alongside `velocity.toml` with all settings annotated.
@@ -57,8 +57,8 @@ On first run, Conduit generates a `conduit.toml` file alongside `velocity.toml` 
 ```bash
 git clone https://github.com/tame-gg/conduit.git
 cd conduit
-./scripts/setup.sh        # clones upstream Velocity and applies Conduit patches
-./gradlew build           # produces proxy/build/libs/conduit-<version>.jar
+./scripts/setup.sh        # clones upstream Velocity-CTD and applies Conduit patches
+./gradlew build           # produces proxy/build/libs/velocity-proxy-<version>-all.jar
 ```
 
 #### Windows (PowerShell)
@@ -66,13 +66,13 @@ cd conduit
 ```powershell
 git clone https://github.com/tame-gg/conduit.git
 cd conduit
-.\scripts\setup.ps1       # clones upstream Velocity and applies Conduit patches
-.\gradlew.bat build       # produces proxy\build\libs\conduit-<version>.jar
+.\scripts\setup.ps1       # clones upstream Velocity-CTD and applies Conduit patches
+.\gradlew.bat build       # produces proxy\build\libs\velocity-proxy-<version>-all.jar
 ```
 
 > The setup script caches the upstream clone in `.upstream-velocity/` so subsequent runs only fetch the delta.
 
-### Update to latest upstream Velocity
+### Update to latest upstream Velocity-CTD
 
 #### macOS / Linux
 
@@ -84,7 +84,7 @@ cd conduit
 
 ```powershell
 # Fetch new upstream commits, then re-run setup
-git -C .upstream-velocity fetch origin dev/3.0.0
+git -C .upstream-velocity fetch origin dev
 git -C .upstream-velocity checkout FETCH_HEAD
 .\scripts\setup.ps1
 ```
@@ -186,7 +186,7 @@ The `-Dvelocity.max-known-packs=<n>` JVM flag is still honoured and overrides `c
 
 ```
 conduit/
-├── overlays/             ← Files that REPLACE upstream Velocity files
+├── overlays/             ← Files that REPLACE upstream Velocity-CTD files
 │   └── proxy/src/main/java/com/velocitypowered/proxy/
 │       ├── VelocityServer.java           Conduit.init() wiring, branding
 │       ├── network/ConnectionManager.java
@@ -232,7 +232,7 @@ conduit/
 └── gradle.properties     ← version numbers (conduit.version, upstream branch)
 ```
 
-The setup script copies the full Velocity source into the working tree, then applies the overlays and additions on top. Only the files in `overlays/` and `additions/` are tracked by this repository; everything else is pulled from upstream at build time.
+The setup script copies the full Velocity-CTD source into the working tree, then applies the overlays and additions on top. Only the files in `overlays/` and `additions/` are tracked by this repository; everything else is pulled from upstream at build time.
 
 ---
 
@@ -255,11 +255,12 @@ The overlay surface is intentionally small so merges stay straightforward.
 
 ## License
 
-Conduit is open source under the [GNU General Public License v3.0](LICENSE), the same license as upstream Velocity. You are free to use, fork, modify, and redistribute it however you like — no restrictions, no strings attached. Pull requests welcome.
+Conduit is open source under the [GNU General Public License v3.0](LICENSE), the same license as upstream Velocity-CTD. You are free to use, fork, modify, and redistribute it however you like — no restrictions, no strings attached. Pull requests welcome.
 
 ---
 
 ## Credits
 
-- **PaperMC Velocity team** — the upstream proxy this fork is built on.
+- **GemstoneGG Velocity-CTD team** — the upstream proxy this fork is built on.
+- **PaperMC Velocity team** — the original Velocity project CTD is based on.
 - **Koels** — author of the original [KnownPacksFix](https://github.com/koelss/knownpacksfix) plugin, whose logic is now integrated natively into Conduit.

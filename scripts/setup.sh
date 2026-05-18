@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# setup.sh — Clones upstream Velocity, applies Conduit overlays, and prepares the build tree.
+# setup.sh — Clones upstream Velocity-CTD, applies Conduit overlays, and prepares the build tree.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-UPSTREAM_REPO="https://github.com/PaperMC/Velocity.git"
-UPSTREAM_BRANCH="dev/3.0.0"
+UPSTREAM_REPO="https://github.com/GemstoneGG/Velocity-CTD.git"
+UPSTREAM_BRANCH="dev"
 UPSTREAM_DIR="$ROOT_DIR/.upstream-velocity"
 CI_MODE=false
 
@@ -22,17 +22,18 @@ echo ""
 # ── 1. Clone or update upstream ──────────────────────────────────────────────
 if [[ -d "$UPSTREAM_DIR/.git" ]]; then
   echo "==> Updating cached upstream clone..."
+  git -C "$UPSTREAM_DIR" remote set-url origin "$UPSTREAM_REPO"
   git -C "$UPSTREAM_DIR" fetch --depth=1 origin "$UPSTREAM_BRANCH"
   git -C "$UPSTREAM_DIR" checkout FETCH_HEAD
 else
-  echo "==> Cloning upstream Velocity (depth=1)..."
+  echo "==> Cloning upstream Velocity-CTD (depth=1)..."
   git clone --depth=1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" "$UPSTREAM_DIR"
 fi
 
 # ── 2. Copy upstream source into our project tree ────────────────────────────
 echo "==> Syncing upstream source files..."
 
-for module in api native proxy build-logic config; do
+for module in api native proxy luckperms-integration build-logic config; do
   if [[ -d "$UPSTREAM_DIR/$module" ]]; then
     rsync -a --delete \
       --exclude='**/KnownPacksPacket.java' \
@@ -44,9 +45,10 @@ for module in api native proxy build-logic config; do
   fi
 done
 
-# Copy top-level Gradle files from upstream if they don't exist locally
-for f in gradlew gradlew.bat gradle HEADER.txt LICENSE; do
-  if [[ -e "$UPSTREAM_DIR/$f" && ! -e "$ROOT_DIR/$f" ]]; then
+# Copy upstream-owned Gradle support files into the generated working tree.
+for f in gradlew gradlew.bat gradle HEADER.txt HEADER-CTD.txt; do
+  if [[ -e "$UPSTREAM_DIR/$f" ]]; then
+    rm -rf "$ROOT_DIR/$f"
     cp -r "$UPSTREAM_DIR/$f" "$ROOT_DIR/$f"
   fi
 done

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2023 Velocity Contributors
+ * Copyright (C) 2018-2026 Velocity Contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,17 +50,16 @@ import java.util.concurrent.TimeUnit;
 /**
  * Server channel initializer.
  */
-@SuppressWarnings("WeakerAccess")
 public class ServerChannelInitializer extends ChannelInitializer<Channel> {
 
   private final VelocityServer server;
 
-  public ServerChannelInitializer(final VelocityServer server) {
+  public ServerChannelInitializer(VelocityServer server) {
     this.server = server;
   }
 
   @Override
-  protected void initChannel(final Channel ch) {
+  protected void initChannel(Channel ch) {
     InetAddress remoteAddress = null;
     if (ch.remoteAddress() instanceof InetSocketAddress remote) {
       remoteAddress = remote.getAddress();
@@ -81,17 +80,14 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
 
     ch.pipeline()
         .addLast(LEGACY_PING_DECODER, new LegacyPingDecoder())
-        .addLast(FRAME_DECODER,
-            new MinecraftVarintFrameDecoder(ProtocolUtils.Direction.SERVERBOUND))
-        .addLast(READ_TIMEOUT,
-            new ReadTimeoutHandler(this.server.getConfiguration().getReadTimeout(),
-                TimeUnit.MILLISECONDS))
+        .addLast(FRAME_DECODER, new MinecraftVarintFrameDecoder(ProtocolUtils.Direction.SERVERBOUND))
+        .addLast(READ_TIMEOUT, new ReadTimeoutHandler(this.server.getConfiguration().getReadTimeout(), TimeUnit.MILLISECONDS))
         .addLast(LEGACY_PING_ENCODER, LegacyPingEncoder.INSTANCE)
         .addLast(FRAME_ENCODER, MinecraftVarintLengthEncoder.INSTANCE)
         .addLast(MINECRAFT_DECODER, new MinecraftDecoder(ProtocolUtils.Direction.SERVERBOUND))
         .addLast(MINECRAFT_ENCODER, new MinecraftEncoder(ProtocolUtils.Direction.CLIENTBOUND));
 
-    final MinecraftConnection connection = new MinecraftConnection(ch, this.server);
+    MinecraftConnection connection = new MinecraftConnection(ch, this.server);
     connection.setActiveSessionHandler(StateRegistry.HANDSHAKE,
         new HandshakeSessionHandler(connection, this.server));
     ch.pipeline().addLast(Connections.HANDLER, connection);
@@ -111,10 +107,9 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
     int configuredPacketsPerSecond = packetLimiterConfig.pps();
     int configuredBytes = packetLimiterConfig.bytes();
 
-    if (configuredInterval > 0 && (configuredBytes > 0 ||  configuredPacketsPerSecond > 0)) {
+    if (configuredInterval > 0 && (configuredBytes > 0 || configuredPacketsPerSecond > 0)) {
       ch.pipeline().get(MinecraftVarintFrameDecoder.class).setPacketLimiter(
-          new SimpleBytesPerSecondLimiter(configuredPacketsPerSecond, configuredBytes,
-              configuredInterval)
+          new SimpleBytesPerSecondLimiter(configuredPacketsPerSecond, configuredBytes, configuredInterval)
       );
     }
     if (this.server.getConfiguration().isProxyProtocol()) {

@@ -12,6 +12,9 @@ actual connection path.
   experimental settings.
 * The official `lucko/spark` Velocity plugin is now bundled and installed automatically as
   `/sparkv` / `/sparkvelocity` unless a spark jar already exists in `plugins/`.
+  * The bundled artifact is checksum-verified at build time.
+  * Stale bundled copies are cleaned up when an operator-managed spark jar is detected.
+  * Can be disabled entirely via `[spark] bundle-enabled = false` in `conduit.toml`.
 * Added focused tests for Conduit config validation, throttling, bot filtering, and channel guard
   matching.
 

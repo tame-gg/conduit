@@ -173,6 +173,10 @@ public final class Conduit {
    * Installs Conduit's bundled spark Velocity plugin before Velocity scans the plugins directory.
    */
   public void installBundledSpark() {
+    if (!config.isSparkBundleEnabled()) {
+      logger.info("[Conduit] Bundled spark is disabled in conduit.toml.");
+      return;
+    }
     try {
       InstallResult result = BundledSparkInstaller.install(configDir);
       switch (result) {

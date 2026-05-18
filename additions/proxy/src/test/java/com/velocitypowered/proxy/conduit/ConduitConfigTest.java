@@ -18,6 +18,7 @@
 package com.velocitypowered.proxy.conduit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Files;
@@ -52,5 +53,18 @@ class ConduitConfigTest {
         """);
 
     assertThrows(IllegalArgumentException.class, () -> ConduitConfig.load(tempDir));
+  }
+
+  @Test
+  void loadsSparkBundleDisabled() throws Exception {
+    Files.writeString(tempDir.resolve("conduit.toml"),
+        """
+        [spark]
+        bundle-enabled = false
+        """);
+
+    ConduitConfig config = ConduitConfig.load(tempDir);
+
+    assertFalse(config.isSparkBundleEnabled());
   }
 }

@@ -31,7 +31,7 @@ Fabric, Forge, and NeoForge backends.
 | **Channel guard** | Intercepts known cheat / exploit plugin-message channels (World-Downloader, X-Ray clients) and applies a drop / kick / log policy. |
 | **Tab-complete cache** | Short-TTL LRU cache for backend tab-completion responses keyed on (server, prefix). Absorbs key-held tab spam at near-zero CPU. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
-| **Bundled spark profiler** | Ships the official `lucko/spark` Velocity plugin and installs it as `/sparkv` / `/sparkvelocity` unless an operator-managed spark jar already exists. |
+| **Bundled spark profiler** | Ships the official `lucko/spark` Velocity plugin and installs it as `/sparkv` / `/sparkvelocity`. Skips if an operator-managed spark jar is present, and can be disabled via `conduit.toml → [spark] → bundle-enabled`. |
 | **Operator commands** | `/conduit reload \| diagnostics \| health \| doctor \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
 
 ---
@@ -149,6 +149,9 @@ channel-guard-block-list        = [         # case-insensitive; trailing ':' mat
 [commands]
 admin-enabled                   = true      # registers /conduit (permission: conduit.admin)
 modlist-enabled                 = true      # registers /modlist  (permission: conduit.modlist)
+
+[spark]
+bundle-enabled                  = true      # extract bundled spark plugin; set false to suppress
 ```
 
 ### Operator commands

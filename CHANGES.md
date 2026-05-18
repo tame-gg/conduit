@@ -17,8 +17,12 @@ All changes relative to upstream `PaperMC/Velocity @ dev/3.0.0`.
   successful reload instead of the startup snapshot.
 * Added `/conduit doctor`, an operator-facing report for config issues, missing fallback servers,
   and features that are configured but still need deeper protocol overlays.
-* Bundled the official `lucko/spark` Velocity plugin. Conduit extracts it into `plugins/` before
-  Velocity loads plugins, unless an operator-managed spark jar is already present.
+* Bundled the official `lucko/spark` Velocity plugin. Conduit embeds the verified Velocity
+  artifact in the proxy jar, then extracts it into `plugins/` before Velocity loads plugins.
+  * If an operator-managed spark jar already exists in `plugins/`, the bundled copy is skipped
+    **and any stale `spark-velocity-bundled.jar` is cleaned up** to prevent double-loading.
+  * New `[spark]` section in `conduit.toml` with `bundle-enabled = true` (default). Set to `false`
+    to suppress bundled spark entirely.
 * Added focused tests for config validation, connection throttling, bot filtering, and channel
   guard matching.
 

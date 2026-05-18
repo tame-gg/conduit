@@ -93,6 +93,9 @@ public final class ConduitConfig {
   private final boolean adminCommandsEnabled;
   private final boolean modListCommandEnabled;
 
+  // ── Spark section ─────────────────────────────────────────────────────────
+  private final boolean sparkBundleEnabled;
+
   private ConduitConfig(Builder b) {
     validate(b);
     this.maxKnownPacks = b.maxKnownPacks;
@@ -139,6 +142,8 @@ public final class ConduitConfig {
 
     this.adminCommandsEnabled = b.adminCommandsEnabled;
     this.modListCommandEnabled = b.modListCommandEnabled;
+
+    this.sparkBundleEnabled = b.sparkBundleEnabled;
   }
 
   /**
@@ -226,6 +231,11 @@ public final class ConduitConfig {
     if (commands != null) {
       b.adminCommandsEnabled = commands.getOrElse("admin-enabled", true);
       b.modListCommandEnabled = commands.getOrElse("modlist-enabled", true);
+    }
+
+    CommentedConfig spark = toml.get("spark");
+    if (spark != null) {
+      b.sparkBundleEnabled = spark.getOrElse("bundle-enabled", true);
     }
 
     CommentedConfig diag = toml.get("diagnostics");
@@ -529,6 +539,13 @@ public final class ConduitConfig {
     return modListCommandEnabled;
   }
 
+  // ── Spark getters ─────────────────────────────────────────────────────────
+
+  /** Returns whether Conduit should extract the bundled spark plugin on startup. */
+  public boolean isSparkBundleEnabled() {
+    return sparkBundleEnabled;
+  }
+
   // ── Builder ───────────────────────────────────────────────────────────────
 
   /** Mutable builder used internally by {@link #fromToml} to construct a {@link ConduitConfig}. */
@@ -577,6 +594,8 @@ public final class ConduitConfig {
 
     boolean adminCommandsEnabled = true;
     boolean modListCommandEnabled = true;
+
+    boolean sparkBundleEnabled = true;
 
     /**
      * Default channel blocklist for {@code ChannelGuard}: well-known World-Downloader and X-Ray

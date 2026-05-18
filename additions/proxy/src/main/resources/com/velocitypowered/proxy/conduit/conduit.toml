@@ -181,3 +181,15 @@ admin-enabled = true
 # Register the `/modlist [player]` command.  Permission: `conduit.modlist`.
 # Shows the mod loader and registered channel set for each connected player.
 modlist-enabled = true
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [spark] — Bundled profiler
+# ─────────────────────────────────────────────────────────────────────────────
+[spark]
+
+# Conduit ships the official spark Velocity profiler and extracts it into
+# plugins/ automatically.  If you prefer to manage spark yourself (or don't
+# want it), set this to false.  If any spark jar already exists in plugins/,
+# Conduit leaves it alone regardless of this setting.
+bundle-enabled = true

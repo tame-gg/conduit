@@ -74,7 +74,7 @@ public class MotdCache {
   /** Cap on distinct remote addresses cached; protects against IPv6 scanner flooding. */
   static final int MAX_ENTRIES = 4096;
 
-  private final long ttlMs;
+  private volatile long ttlMs;
   private final ReentrantLock lock = new ReentrantLock();
   private final LinkedHashMap<InetAddress, CachedPing> cache =
       new LinkedHashMap<>(64, 0.75f, true) {
@@ -150,6 +150,16 @@ public class MotdCache {
    */
   public long getCacheMisses() {
     return cacheMisses.sum();
+  }
+
+  /** Returns the current MOTD cache TTL in milliseconds. */
+  public long getTtlMs() {
+    return ttlMs;
+  }
+
+  /** Updates the MOTD cache TTL for future lookups. */
+  public void setTtlMs(long ttlMs) {
+    this.ttlMs = ttlMs;
   }
 
   /**

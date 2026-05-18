@@ -52,17 +52,6 @@ public final class ConduitDoctor {
         warnings.add("fallback server '" + fallback + "' is not registered in velocity.toml");
       }
     }
-    if (cfg.isTabCompleteCacheEnabled()) {
-      warnings.add("tab-complete-cache is enabled, but the play-session overlay is not wired yet");
-    }
-    if (cfg.isSmartCompressionEnabled()) {
-      warnings.add("smart-compression is configured, but the compression overlay is not wired yet");
-    }
-    if (cfg.isPacketQueueOptEnabled()) {
-      warnings.add("packet-queue-optimization is configured, but the transition overlay is not "
-          + "wired yet");
-    }
-
     StringBuilder report = new StringBuilder();
     report.append("Conduit Doctor v").append(conduit.getConduitVersion()).append('\n');
     report.append("  Known-packs limit      : ").append(cfg.getMaxKnownPacks()).append('\n');
@@ -75,6 +64,12 @@ public final class ConduitDoctor {
     report.append("  Fallback servers       : ").append(cfg.getFallbackServers()).append('\n');
     report.append("  Channel guard          : ").append(cfg.isChannelGuardEnabled())
         .append(" (").append(cfg.getChannelGuardAction()).append(")\n");
+    report.append("  Tab-complete cache     : ").append(cfg.isTabCompleteCacheEnabled()).append('\n');
+    report.append("  Smart compression      : ").append(cfg.isSmartCompressionEnabled()).append('\n');
+    report.append("  Packet queue opt       : ").append(cfg.isPacketQueueOptEnabled()).append('\n');
+    report.append("  Mod compatibility      : ")
+        .append(cfg.getModCompatibilityRules().isEnabled()).append('\n');
+    report.append("  Metrics HTTP           : ").append(cfg.isMetricsHttpEnabled()).append('\n');
 
     if (warnings.isEmpty()) {
       report.append("  Result                 : OK");

@@ -52,14 +52,13 @@ log-mod-handshakes = false
 write-buffer-high-watermark = 2097152   # 2 MiB
 write-buffer-low-watermark  = 1048576   # 1 MiB
 
-# Skip compressing packets whose compressed size would not be meaningfully
-# smaller than the raw size.  The threshold is velocity.toml's
-# compression-threshold; this option adds a minimum byte-saving requirement.
-# Reduces CPU for near-incompressible payloads (encrypted, image, audio data).
+# Use Conduit's pre-flight compression path. Above-threshold packets still fall
+# back to a valid compressed frame when the smart path declines, preserving
+# compatibility with peers that enforce the negotiated compression threshold.
 smart-compression = true
 
-# Minimum bytes saved before compression is applied.  Packets where
-# (uncompressed – compressed) < this value are sent raw instead.
+# Minimum bytes saved before the smart path is accepted. Packets below this
+# saving still use vanilla compression so the wire protocol remains valid.
 smart-compression-min-delta = 64
 
 # Batch outbound packets during server transitions to avoid N round-trips.
@@ -154,6 +153,7 @@ bot-filter-threshold  = 10
 #
 # Players with the `conduit.channelguard.bypass` permission are exempt from all blocks.
 channel-guard          = false
+channel-guard-preset   = "custom"
 channel-guard-action   = "drop"
 channel-guard-block-list = [
     "wdl:init",
@@ -167,6 +167,36 @@ channel-guard-block-list = [
     "bsm:",
     "5zig:",
 ]
+
+# Stricter live limits used by `/conduit attackmode on`. These do not rewrite
+# this file; `/conduit attackmode off` restores the normal values above.
+attack-mode-connection-throttle-max-per-second = 8
+attack-mode-bot-filter-threshold = 3
+attack-mode-motd-cache-ttl-ms = 10000
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [routing] — Backend compatibility rules
+# ─────────────────────────────────────────────────────────────────────────────
+[routing]
+
+# Optional per-backend client-loader allow rules. Format:
+#   "server=VANILLA,FABRIC,LEGACY_FORGE,NEOFORGE,UNKNOWN_MODDED"
+# Servers without a rule keep Velocity's default behavior.
+mod-compatibility = []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [metrics] — Lightweight diagnostics endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+[metrics]
+
+# Expose Conduit diagnostics counters as compact JSON over HTTP.
+# Keep this bound to loopback unless you put it behind your own firewall.
+http-enabled = false
+http-host = "127.0.0.1"
+http-port = 9589
+http-path = "/metrics"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -243,9 +243,19 @@ public final class ConduitDiagnostics {
     return slowLogins.sum();
   }
 
+  /** Returns the total number of oversized payloads recorded. */
+  public long getOversizedPayloads() {
+    return oversizedPayloads.sum();
+  }
+
   /** Returns the total number of times compression was skipped. */
   public long getCompressionSkips() {
     return compressionSkips.sum();
+  }
+
+  /** Returns the total number of packet queue flushes. */
+  public long getPacketQueueFlushes() {
+    return packetQueueFlushes.sum();
   }
 
   /** Returns the total number of tab-complete cache hits. */

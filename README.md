@@ -18,7 +18,7 @@ backends.
 | **Configurable known-packs limit** | Raises the max-known-packs cap via `conduit.toml`. Default 1 024 vs Velocity's 64 — no reflection hacks. Replaces the KnownPacksFix plugin. |
 | **Modded handshake cache** | Caches negotiated pack lists so returning modded clients skip the handshake round-trip. |
 | **NeoForge / Forge compat** | Better payload validation, channel detection, and address-marker stripping for FML1/FML2/FML3 clients. |
-| **Smart compression** | Entropy-based pre-flight check skips compressing already-compressed payloads. |
+| **Smart compression** | Entropy-based pre-flight compression path avoids unsafe raw above-threshold packets and falls back to vanilla compression when needed. |
 | **Configurable write-buffer watermarks** | Tune Netty's backpressure per-deployment in `conduit.toml` instead of recompiling. |
 | **Increased SO_BACKLOG** | Raised from 128 → 1 024 to handle burst logins on large networks. |
 | **Per-IP connection throttle** | Drops TCP connections at the Netty accept stage before any packet data is read, protecting against bot floods. |
@@ -29,7 +29,10 @@ backends.
 | **Graceful shutdown** | Transfers connected players to a fallback server (or disconnects with a friendly message) before the proxy exits. |
 | **Bot filter** | Blocks IPs that repeatedly open TCP channels without completing the initial Minecraft handshake. |
 | **Channel guard** | Intercepts known cheat / exploit plugin-message channels (World-Downloader, X-Ray clients) and applies a drop / kick / log policy. |
+| **Attack mode** | `/conduit attackmode on/off/status` applies stricter live flood-mitigation limits without editing config. |
+| **Mod compatibility routing** | Optional per-backend allow rules for Vanilla, Fabric, Forge, NeoForge, and unknown modded clients. |
 | **Tab-complete cache** | Short-TTL LRU cache for backend tab-completion responses keyed on (server, prefix). Absorbs key-held tab spam at near-zero CPU. |
+| **Metrics JSON endpoint** | Optional loopback HTTP endpoint and `/conduit metrics json` expose diagnostics counters for dashboards. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
 | **Bundled spark profiler** | Ships the official `lucko/spark` Velocity plugin and installs it as `/sparkv` / `/sparkvelocity`. Skips if an operator-managed spark jar is present, and can be disabled via `conduit.toml → [spark] → bundle-enabled`. |
 | **Operator commands** | `/conduit reload \| diagnostics \| health \| doctor \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
@@ -139,12 +142,25 @@ bot-filter-threshold            = 10
 
 [security]
 channel-guard                   = false     # opt-in; default-off blocks player traffic
+channel-guard-preset            = "custom"  # custom | audit | modded-safe | strict
 channel-guard-action            = "drop"    # drop | kick | log
 channel-guard-block-list        = [         # case-insensitive; trailing ':' matches namespace
     "wdl:init", "wdl:control", "wdl:request",
     "world_downloader:init", "world_downloader:control", "world_downloader:request",
     "xaero:", "schematica:", "bsm:", "5zig:",
 ]
+attack-mode-connection-throttle-max-per-second = 8
+attack-mode-bot-filter-threshold = 3
+attack-mode-motd-cache-ttl-ms = 10000
+
+[routing]
+mod-compatibility = []          # e.g. ["lobby=VANILLA,FABRIC", "modded=NEOFORGE,LEGACY_FORGE"]
+
+[metrics]
+http-enabled = false
+http-host = "127.0.0.1"
+http-port = 9589
+http-path = "/metrics"
 
 [commands]
 admin-enabled                   = true      # registers /conduit (permission: conduit.admin)
@@ -162,6 +178,10 @@ bundle-enabled                  = true      # extract bundled spark plugin; set 
 | `/conduit diagnostics` | Prints the counter snapshot — connections, cache hits, throttles, slow logins, channels blocked, etc. | `conduit.admin` |
 | `/conduit health` | Prints the per-backend health summary (`HEALTHY` / `UNHEALTHY`, failure count, last-checked timestamp). | `conduit.admin` |
 | `/conduit doctor` | Checks Conduit config and feature wiring, including fallback-server names and restart-required/experimental settings. | `conduit.admin` |
+| `/conduit metrics json` | Prints diagnostics counters as compact JSON. | `conduit.admin` |
+| `/conduit attackmode on \| off \| status` | Applies or restores stricter live flood-mitigation limits. | `conduit.admin` |
+| `/conduit config diff` | Shows changed config keys and whether they apply live or require restart. | `conduit.admin` |
+| `/conduit failover test <server>` | Shows which healthy fallback server would be selected if a backend failed. | `conduit.admin` |
 | `/conduit unblock <ip>` | Clears a bot-filter block on the given IP. | `conduit.admin` |
 | `/conduit cache invalidate <ip>` | Drops cached MOTD and modded-handshake entries for the given IP. | `conduit.admin` |
 | `/modlist` | Lists every connected player with their detected mod loader and channel count. | `conduit.modlist` |

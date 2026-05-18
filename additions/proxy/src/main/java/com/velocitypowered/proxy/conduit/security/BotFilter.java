@@ -79,7 +79,7 @@ public class BotFilter {
   static final long BLOCK_DURATION_MS = 10 * 60_000L; // 10 minutes
 
   private final long handshakeTimeoutMs;
-  private final int threshold;
+  private volatile int threshold;
   private final ReentrantLock lock = new ReentrantLock();
 
   private final LinkedHashMap<InetAddress, IpRecord> records =
@@ -215,6 +215,16 @@ public class BotFilter {
   /** Returns the configured handshake timeout in milliseconds. */
   public long getHandshakeTimeoutMs() {
     return handshakeTimeoutMs;
+  }
+
+  /** Returns the current incomplete-handshake block threshold. */
+  public int getThreshold() {
+    return threshold;
+  }
+
+  /** Updates the incomplete-handshake block threshold for newly recorded timeouts. */
+  public void setThreshold(int threshold) {
+    this.threshold = threshold;
   }
 
   // ── Inner types ────────────────────────────────────────────────────────────

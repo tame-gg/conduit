@@ -20,6 +20,9 @@ package com.velocitypowered.proxy.conduit;
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import com.velocitypowered.proxy.protocol.packet.config.KnownPacksPacket;
+import com.velocitypowered.proxy.conduit.routing.ModCompatibilityRules;
+import com.velocitypowered.proxy.conduit.security.AttackModePolicy;
+import com.velocitypowered.proxy.conduit.security.ChannelGuardPreset;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -86,8 +89,19 @@ public final class ConduitConfig {
 
   // ── Security section ──────────────────────────────────────────────────────
   private final boolean channelGuardEnabled;
+  private final ChannelGuardPreset channelGuardPreset;
   private final String channelGuardAction;
   private final List<String> channelGuardBlockList;
+  private final AttackModePolicy attackModePolicy;
+
+  // ── Routing section ───────────────────────────────────────────────────────
+  private final ModCompatibilityRules modCompatibilityRules;
+
+  // ── Metrics section ───────────────────────────────────────────────────────
+  private final boolean metricsHttpEnabled;
+  private final String metricsHttpHost;
+  private final int metricsHttpPort;
+  private final String metricsHttpPath;
 
   // ── Commands section ──────────────────────────────────────────────────────
   private final boolean adminCommandsEnabled;
@@ -137,8 +151,17 @@ public final class ConduitConfig {
     this.tabCompleteCacheMaxEntries = b.tabCompleteCacheMaxEntries;
 
     this.channelGuardEnabled = b.channelGuardEnabled;
+    this.channelGuardPreset = b.channelGuardPreset;
     this.channelGuardAction = b.channelGuardAction;
     this.channelGuardBlockList = b.channelGuardBlockList;
+    this.attackModePolicy = b.attackModePolicy;
+
+    this.modCompatibilityRules = b.modCompatibilityRules;
+
+    this.metricsHttpEnabled = b.metricsHttpEnabled;
+    this.metricsHttpHost = b.metricsHttpHost;
+    this.metricsHttpPort = b.metricsHttpPort;
+    this.metricsHttpPath = b.metricsHttpPath;
 
     this.adminCommandsEnabled = b.adminCommandsEnabled;
     this.modListCommandEnabled = b.modListCommandEnabled;
@@ -153,6 +176,15 @@ public final class ConduitConfig {
    * Conduit v1.0.x), the file is renamed automatically so existing configuration is preserved.
    */
   public static ConduitConfig load(Path configDir) {
+    return load(configDir, true);
+  }
+
+  /** Loads {@code conduit.toml} for inspection without mutating live static values. */
+  public static ConduitConfig loadPreview(Path configDir) {
+    return load(configDir, false);
+  }
+
+  private static ConduitConfig load(Path configDir, boolean applyLiveValues) {
     Path file = configDir.resolve("conduit.toml");
     if (!Files.exists(file)) {
       Path legacy = configDir.resolve("radar.toml");
@@ -175,7 +207,9 @@ public final class ConduitConfig {
     try {
       toml.load();
       ConduitConfig cfg = fromToml(toml);
-      cfg.applyLiveValues();
+      if (applyLiveValues) {
+        cfg.applyLiveValues();
+      }
       return cfg;
     } finally {
       // Close the underlying channels but don't trigger a save.
@@ -222,9 +256,32 @@ public final class ConduitConfig {
     CommentedConfig security = toml.get("security");
     if (security != null) {
       b.channelGuardEnabled = security.getOrElse("channel-guard", false);
-      b.channelGuardAction = security.getOrElse("channel-guard-action", "drop");
+      b.channelGuardPreset = ChannelGuardPreset.parse(
+          security.getOrElse("channel-guard-preset", "custom"));
+      b.channelGuardAction = security.getOrElse("channel-guard-action",
+          b.channelGuardPreset.defaultAction().name().toLowerCase());
       b.channelGuardBlockList = security.getOrElse("channel-guard-block-list",
-          Builder.DEFAULT_CHANNEL_BLOCK_LIST);
+          b.channelGuardPreset == ChannelGuardPreset.CUSTOM
+              ? Builder.DEFAULT_CHANNEL_BLOCK_LIST
+              : b.channelGuardPreset.blockList());
+      b.attackModePolicy = new AttackModePolicy(
+          security.getIntOrElse("attack-mode-connection-throttle-max-per-second", 8),
+          security.getIntOrElse("attack-mode-bot-filter-threshold", 3),
+          security.getIntOrElse("attack-mode-motd-cache-ttl-ms", 10000));
+    }
+
+    CommentedConfig routing = toml.get("routing");
+    if (routing != null) {
+      b.modCompatibilityRules = ModCompatibilityRules.parse(
+          routing.getOrElse("mod-compatibility", Collections.emptyList()));
+    }
+
+    CommentedConfig metrics = toml.get("metrics");
+    if (metrics != null) {
+      b.metricsHttpEnabled = metrics.getOrElse("http-enabled", false);
+      b.metricsHttpHost = metrics.getOrElse("http-host", "127.0.0.1");
+      b.metricsHttpPort = metrics.getIntOrElse("http-port", 9589);
+      b.metricsHttpPath = metrics.getOrElse("http-path", "/metrics");
     }
 
     CommentedConfig commands = toml.get("commands");
@@ -287,6 +344,14 @@ public final class ConduitConfig {
     requirePositive("bot-filter-threshold", b.botFilterThreshold);
     requirePositive("tab-complete-cache-ttl-ms", b.tabCompleteCacheTtlMs);
     requirePositive("tab-complete-cache-max-entries", b.tabCompleteCacheMaxEntries);
+    requirePositive("attack-mode-connection-throttle-max-per-second",
+        b.attackModePolicy.throttleMaxPerSecond());
+    requirePositive("attack-mode-bot-filter-threshold", b.attackModePolicy.botFilterThreshold());
+    requirePositive("attack-mode-motd-cache-ttl-ms", b.attackModePolicy.motdCacheTtlMs());
+    requirePositive("metrics.http-port", b.metricsHttpPort);
+    if (b.metricsHttpPath == null || !b.metricsHttpPath.startsWith("/")) {
+      throw new IllegalArgumentException("conduit.toml: metrics.http-path must start with '/'");
+    }
     String action = b.channelGuardAction;
     if (action == null
         || !(action.equalsIgnoreCase("drop")
@@ -517,6 +582,11 @@ public final class ConduitConfig {
     return channelGuardEnabled;
   }
 
+  /** Returns the named ChannelGuard preset. */
+  public ChannelGuardPreset getChannelGuardPreset() {
+    return channelGuardPreset;
+  }
+
   /** Returns the action taken on a blocked channel: {@code drop}, {@code kick}, or {@code log}. */
   public String getChannelGuardAction() {
     return channelGuardAction;
@@ -525,6 +595,40 @@ public final class ConduitConfig {
   /** Returns the list of channel-name patterns rejected by the channel guard. */
   public List<String> getChannelGuardBlockList() {
     return channelGuardBlockList;
+  }
+
+  /** Returns stricter live limits used by {@code /conduit attackmode on}. */
+  public AttackModePolicy getAttackModePolicy() {
+    return attackModePolicy;
+  }
+
+  // ── Routing getters ──────────────────────────────────────────────────────
+
+  /** Returns per-backend mod compatibility rules. */
+  public ModCompatibilityRules getModCompatibilityRules() {
+    return modCompatibilityRules;
+  }
+
+  // ── Metrics getters ──────────────────────────────────────────────────────
+
+  /** Returns whether the lightweight HTTP metrics endpoint is enabled. */
+  public boolean isMetricsHttpEnabled() {
+    return metricsHttpEnabled;
+  }
+
+  /** Returns the bind host for the lightweight HTTP metrics endpoint. */
+  public String getMetricsHttpHost() {
+    return metricsHttpHost;
+  }
+
+  /** Returns the bind port for the lightweight HTTP metrics endpoint. */
+  public int getMetricsHttpPort() {
+    return metricsHttpPort;
+  }
+
+  /** Returns the URL path for the lightweight HTTP metrics endpoint. */
+  public String getMetricsHttpPath() {
+    return metricsHttpPath;
   }
 
   // ── Command getters ───────────────────────────────────────────────────────
@@ -589,8 +693,17 @@ public final class ConduitConfig {
     int tabCompleteCacheMaxEntries = 1024;
 
     boolean channelGuardEnabled = false;
+    ChannelGuardPreset channelGuardPreset = ChannelGuardPreset.CUSTOM;
     String channelGuardAction = "drop";
     List<String> channelGuardBlockList = DEFAULT_CHANNEL_BLOCK_LIST;
+    AttackModePolicy attackModePolicy = new AttackModePolicy(8, 3, 10000);
+
+    ModCompatibilityRules modCompatibilityRules = ModCompatibilityRules.ALLOW_ALL;
+
+    boolean metricsHttpEnabled = false;
+    String metricsHttpHost = "127.0.0.1";
+    int metricsHttpPort = 9589;
+    String metricsHttpPath = "/metrics";
 
     boolean adminCommandsEnabled = true;
     boolean modListCommandEnabled = true;

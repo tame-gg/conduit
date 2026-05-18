@@ -25,7 +25,10 @@ import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.proxy.conduit.Conduit;
+import com.velocitypowered.proxy.conduit.ConduitConfig;
+import com.velocitypowered.proxy.conduit.diagnostics.ConduitConfigDiff;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitDoctor;
+import com.velocitypowered.proxy.conduit.diagnostics.ConduitMetricsSnapshot;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import net.kyori.adventure.text.Component;
@@ -82,6 +85,23 @@ public final class ConduitCommand {
             .executes(ConduitCommand::health))
         .then(BrigadierCommand.literalArgumentBuilder("doctor")
             .executes(ctx -> doctor(ctx, proxy)))
+        .then(BrigadierCommand.literalArgumentBuilder("metrics")
+            .then(BrigadierCommand.literalArgumentBuilder("json")
+                .executes(ConduitCommand::metricsJson)))
+        .then(BrigadierCommand.literalArgumentBuilder("attackmode")
+            .then(BrigadierCommand.literalArgumentBuilder("on")
+                .executes(ConduitCommand::attackModeOn))
+            .then(BrigadierCommand.literalArgumentBuilder("off")
+                .executes(ConduitCommand::attackModeOff))
+            .then(BrigadierCommand.literalArgumentBuilder("status")
+                .executes(ConduitCommand::attackModeStatus)))
+        .then(BrigadierCommand.literalArgumentBuilder("config")
+            .then(BrigadierCommand.literalArgumentBuilder("diff")
+                .executes(ConduitCommand::configDiff)))
+        .then(BrigadierCommand.literalArgumentBuilder("failover")
+            .then(BrigadierCommand.literalArgumentBuilder("test")
+                .then(BrigadierCommand.requiredArgumentBuilder("server", StringArgumentType.string())
+                    .executes(ConduitCommand::failoverTest))))
         .then(BrigadierCommand.literalArgumentBuilder("unblock")
             .then(BrigadierCommand.requiredArgumentBuilder("ip", StringArgumentType.string())
                 .executes(ConduitCommand::unblock)))
@@ -104,6 +124,14 @@ public final class ConduitCommand {
         + "— show backend health", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit doctor                   "
         + "— check config and feature wiring", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit metrics json             "
+        + "— show diagnostics as JSON", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit attackmode on|off|status "
+        + "— toggle stricter flood limits", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit config diff              "
+        + "— preview changed config keys", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit failover test <server>   "
+        + "— show fallback target", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit unblock <ip>             "
         + "— clear a bot-filter block", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit cache invalidate <ip>    "
@@ -141,6 +169,61 @@ public final class ConduitCommand {
     ctx.getSource().sendMessage(Component.text(
         ConduitDoctor.buildReport(Conduit.get(), proxy), NamedTextColor.AQUA));
     return Command.SINGLE_SUCCESS;
+  }
+
+  private static int metricsJson(CommandContext<CommandSource> ctx) {
+    ctx.getSource().sendMessage(Component.text(
+        ConduitMetricsSnapshot.from(Conduit.get().getDiagnostics()).toJson(), NamedTextColor.AQUA));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int attackModeOn(CommandContext<CommandSource> ctx) {
+    Conduit.get().enableAttackMode();
+    ctx.getSource().sendMessage(Component.text("Conduit attack mode enabled.",
+        NamedTextColor.YELLOW));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int attackModeOff(CommandContext<CommandSource> ctx) {
+    Conduit.get().disableAttackMode();
+    ctx.getSource().sendMessage(Component.text("Conduit attack mode disabled.",
+        NamedTextColor.GREEN));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int attackModeStatus(CommandContext<CommandSource> ctx) {
+    ctx.getSource().sendMessage(Component.text(
+        "Conduit attack mode: " + (Conduit.get().isAttackModeEnabled() ? "ON" : "OFF"),
+        NamedTextColor.AQUA));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int configDiff(CommandContext<CommandSource> ctx) {
+    try {
+      ConduitConfig preview = ConduitConfig.loadPreview(Conduit.get().getConfigDir());
+      ctx.getSource().sendMessage(Component.text(
+          ConduitConfigDiff.between(Conduit.get().getConfig(), preview).toHumanString(),
+          NamedTextColor.AQUA));
+      return Command.SINGLE_SUCCESS;
+    } catch (RuntimeException ex) {
+      ctx.getSource().sendMessage(Component.text(
+          "Config diff failed: " + ex.getMessage(), NamedTextColor.RED));
+      return 0;
+    }
+  }
+
+  private static int failoverTest(CommandContext<CommandSource> ctx) {
+    String server = StringArgumentType.getString(ctx, "server");
+    var target = Conduit.get().getFallbackRouter().simulateFallback(server);
+    if (target.isPresent()) {
+      ctx.getSource().sendMessage(Component.text(
+          "If " + server + " fails, Conduit would route to "
+              + target.get().getServerInfo().getName() + ".", NamedTextColor.GREEN));
+      return Command.SINGLE_SUCCESS;
+    }
+    ctx.getSource().sendMessage(Component.text(
+        "No healthy fallback target is available for " + server + ".", NamedTextColor.YELLOW));
+    return 0;
   }
 
   private static int unblock(CommandContext<CommandSource> ctx) {

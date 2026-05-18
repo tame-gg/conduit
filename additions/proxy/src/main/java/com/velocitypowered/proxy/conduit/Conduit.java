@@ -22,6 +22,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.proxy.conduit.command.ConduitCommand;
 import com.velocitypowered.proxy.conduit.command.ModListCommand;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
+import com.velocitypowered.proxy.conduit.diagnostics.ConduitMetricsServer;
 import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
 import com.velocitypowered.proxy.conduit.health.FallbackRouter;
 import com.velocitypowered.proxy.conduit.modded.ModTrackerListener;
@@ -30,6 +31,7 @@ import com.velocitypowered.proxy.conduit.modded.ModdedHandshakeCache;
 import com.velocitypowered.proxy.conduit.motd.MotdCache;
 import com.velocitypowered.proxy.conduit.network.ConnectionThrottler;
 import com.velocitypowered.proxy.conduit.network.TabCompleteCache;
+import com.velocitypowered.proxy.conduit.routing.ModCompatibilityRouter;
 import com.velocitypowered.proxy.conduit.security.BotFilter;
 import com.velocitypowered.proxy.conduit.security.ChannelGuard;
 import com.velocitypowered.proxy.conduit.shutdown.GracefulShutdown;
@@ -69,6 +71,9 @@ public final class Conduit {
   private final ModTrackerListener clientTrackerListener;
   private final TabCompleteCache tabCompleteCache;
   private final ChannelGuard channelGuard;
+  private final ModCompatibilityRouter modCompatibilityRouter;
+  private volatile ConduitMetricsServer metricsServer;
+  private volatile boolean attackModeEnabled;
 
   private Conduit(Path configDir) {
     this.configDir = configDir;
@@ -110,6 +115,8 @@ public final class Conduit {
         ? new ChannelGuard(config.getChannelGuardBlockList(),
             ChannelGuard.Action.parse(config.getChannelGuardAction()), diagnostics)
         : ChannelGuard.DISABLED;
+    this.modCompatibilityRouter = new ModCompatibilityRouter(clientTracker,
+        config.getModCompatibilityRules());
 
     logStartupSummary();
   }
@@ -158,6 +165,9 @@ public final class Conduit {
     clientTrackerListener.register(plugin, proxy);
 
     channelGuard.register(plugin, proxy);
+    modCompatibilityRouter.register(plugin, proxy);
+
+    startMetricsServerIfEnabled();
 
     if (config.isAdminCommandsEnabled()) {
       ConduitCommand.register(proxy, plugin);
@@ -167,6 +177,22 @@ public final class Conduit {
     }
 
     logger.info("[Conduit] All subsystems started against proxy.");
+  }
+
+  private void startMetricsServerIfEnabled() {
+    if (!config.isMetricsHttpEnabled()) {
+      return;
+    }
+    try {
+      metricsServer = new ConduitMetricsServer(
+          config.getMetricsHttpHost(),
+          config.getMetricsHttpPort(),
+          config.getMetricsHttpPath(),
+          diagnostics);
+      metricsServer.start();
+    } catch (IOException e) {
+      logger.warn("[Conduit] Failed to start metrics endpoint: {}", e.getMessage());
+    }
   }
 
   /**
@@ -210,6 +236,13 @@ public final class Conduit {
     handshakeCache.setTtlSeconds(newConfig.getHandshakeCacheTtlSeconds());
     connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
     diagnostics.reconfigure(newConfig);
+    if (attackModeEnabled) {
+      newConfig.getAttackModePolicy().apply(connectionThrottler, botFilter, motdCache);
+    } else {
+      connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
+      botFilter.setThreshold(newConfig.getBotFilterThreshold());
+      motdCache.setTtlMs(newConfig.getMotdCacheTtlMs());
+    }
     config = newConfig;
     logger.info("[Conduit] Reload complete. Note: write-buffer watermarks, health-check interval,"
         + " MOTD TTL, graceful-shutdown, bot-filter, tab-complete cache, and channel-guard"
@@ -224,6 +257,11 @@ public final class Conduit {
   /** Returns the loaded {@link ConduitConfig}. */
   public ConduitConfig getConfig() {
     return config;
+  }
+
+  /** Returns the directory containing {@code conduit.toml}. */
+  public Path getConfigDir() {
+    return configDir;
   }
 
   /** Returns the active {@link ModdedHandshakeCache}. */
@@ -282,6 +320,31 @@ public final class Conduit {
   /** Returns the active {@link TabCompleteCache}. */
   public TabCompleteCache getTabCompleteCache() {
     return tabCompleteCache;
+  }
+
+  /** Returns whether stricter attack-mode runtime limits are active. */
+  public boolean isAttackModeEnabled() {
+    return attackModeEnabled;
+  }
+
+  /** Enables stricter live runtime limits for bot-flood mitigation. */
+  public void enableAttackMode() {
+    config.getAttackModePolicy().apply(connectionThrottler, botFilter, motdCache);
+    attackModeEnabled = true;
+    logger.warn("[Conduit] Attack mode enabled.");
+  }
+
+  /** Restores live runtime limits from {@code conduit.toml}. */
+  public void disableAttackMode() {
+    config.getAttackModePolicy().restore(
+        connectionThrottler,
+        botFilter,
+        motdCache,
+        config.getConnectionThrottleMaxPerSecond(),
+        config.getBotFilterThreshold(),
+        config.getMotdCacheTtlMs());
+    attackModeEnabled = false;
+    logger.info("[Conduit] Attack mode disabled.");
   }
 
   /** Returns the active {@link ChannelGuard}. */

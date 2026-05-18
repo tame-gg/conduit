@@ -117,7 +117,7 @@ public final class SmartCompression {
     private final SmartCompression ctx;
 
     SmartDeflater(int level, int threshold, SmartCompression ctx) {
-      this.deflater = new Deflater(level == -1 ? Deflater.DEFAULT_COMPRESSION : level, true);
+      this.deflater = new Deflater(level == -1 ? Deflater.DEFAULT_COMPRESSION : level);
       this.threshold = threshold;
       this.ctx = ctx;
     }

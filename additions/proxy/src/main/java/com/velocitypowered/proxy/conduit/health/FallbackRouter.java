@@ -56,6 +56,11 @@ public class FallbackRouter {
     public void onKickedFromServer(KickedFromServerEvent event) {
       // no-op
     }
+
+    @Override
+    public Optional<RegisteredServer> simulateFallback(String kickedFrom) {
+      return Optional.empty();
+    }
   };
 
   private final BackendHealthChecker healthChecker;
@@ -112,6 +117,11 @@ public class FallbackRouter {
           + " player will be disconnected.",
           event.getPlayer().getUsername(), kickedFrom);
     }
+  }
+
+  /** Returns the fallback target Conduit would choose if {@code kickedFrom} became unavailable. */
+  public Optional<RegisteredServer> simulateFallback(String kickedFrom) {
+    return resolveTarget(kickedFrom);
   }
 
   private Optional<RegisteredServer> resolveTarget(String kickedFrom) {

@@ -103,6 +103,11 @@ public class ConnectionThrottler {
     this.maxPerSecond = maxPerSecond;
   }
 
+  /** Returns the current maximum connections per second per IP. */
+  public int getMaxPerSecond() {
+    return maxPerSecond;
+  }
+
   /** Returns the number of IPs currently tracked (for diagnostics). */
   public int trackedIpCount() {
     lock.lock();

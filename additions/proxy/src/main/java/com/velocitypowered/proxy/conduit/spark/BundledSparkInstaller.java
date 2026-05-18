@@ -66,6 +66,7 @@ public final class BundledSparkInstaller {
     Files.createDirectories(pluginsDir);
 
     if (hasOperatorManagedSparkJar(pluginsDir)) {
+      Files.deleteIfExists(pluginsDir.resolve(BUNDLED_SPARK_FILE));
       return InstallResult.SKIPPED_EXISTING_SPARK;
     }
 

@@ -59,4 +59,22 @@ class BundledSparkInstallerTest {
     assertArrayEquals(existingBytes, Files.readAllBytes(existing));
     assertFalse(Files.exists(pluginsDir.resolve("spark-velocity-bundled.jar")));
   }
+
+  @Test
+  void deletesStaleBundledJarWhenOperatorManagedJarExists() throws Exception {
+    Path pluginsDir = tempDir.resolve("plugins");
+    Files.createDirectories(pluginsDir);
+    Path staleBundled = pluginsDir.resolve("spark-velocity-bundled.jar");
+    Files.write(staleBundled, new byte[] {1, 2, 3});
+    Path existingOperator = pluginsDir.resolve("spark-custom.jar");
+    byte[] operatorBytes = new byte[] {9, 8, 7};
+    Files.write(existingOperator, operatorBytes);
+
+    BundledSparkInstaller.InstallResult result = BundledSparkInstaller.install(
+        tempDir, () -> new ByteArrayInputStream(new byte[] {4, 5, 6}));
+
+    assertEquals(BundledSparkInstaller.InstallResult.SKIPPED_EXISTING_SPARK, result);
+    assertFalse(Files.exists(staleBundled));
+    assertArrayEquals(operatorBytes, Files.readAllBytes(existingOperator));
+  }
 }

@@ -19,8 +19,8 @@ package com.velocitypowered.proxy.conduit.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.velocitypowered.proxy.conduit.network.ConnectionThrottler;
 import com.velocitypowered.proxy.conduit.motd.MotdCache;
+import com.velocitypowered.proxy.conduit.network.ConnectionThrottler;
 import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 

@@ -19,10 +19,10 @@ package com.velocitypowered.proxy.conduit;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
-import com.velocitypowered.proxy.protocol.packet.config.KnownPacksPacket;
 import com.velocitypowered.proxy.conduit.routing.ModCompatibilityRules;
 import com.velocitypowered.proxy.conduit.security.AttackModePolicy;
 import com.velocitypowered.proxy.conduit.security.ChannelGuardPreset;
+import com.velocitypowered.proxy.protocol.packet.config.KnownPacksPacket;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -179,11 +179,6 @@ public final class ConduitConfig {
     return load(configDir, true);
   }
 
-  /** Loads {@code conduit.toml} for inspection without mutating live static values. */
-  public static ConduitConfig loadPreview(Path configDir) {
-    return load(configDir, false);
-  }
-
   private static ConduitConfig load(Path configDir, boolean applyLiveValues) {
     Path file = configDir.resolve("conduit.toml");
     if (!Files.exists(file)) {
@@ -219,6 +214,11 @@ public final class ConduitConfig {
         // best-effort
       }
     }
+  }
+
+  /** Loads {@code conduit.toml} for inspection without mutating live static values. */
+  public static ConduitConfig loadPreview(Path configDir) {
+    return load(configDir, false);
   }
 
   private static ConduitConfig fromToml(CommentedConfig toml) {

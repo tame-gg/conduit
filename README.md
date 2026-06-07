@@ -283,4 +283,4 @@ Conduit is open source under the [GNU General Public License v3.0](LICENSE), the
 
 - **GemstoneGG Velocity-CTD team** — the upstream proxy this fork is built on.
 - **PaperMC Velocity team** — the original Velocity project CTD is based on.
-- **Koels** — author of the original [KnownPacksFix](https://github.com/koelss/knownpacksfix) plugin, whose logic is now integrated natively into Conduit.
+- **Koels** — author of the original [KnownPacksFix](https://github.com/koels/knownpacksfix) plugin, whose logic is now integrated natively into Conduit.

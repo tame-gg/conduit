@@ -102,8 +102,9 @@ if (Test-Path $additionsDir) {
 # ── 5. Write the Conduit build metadata ──────────────────────────────────────
 $conduitVersion = (Get-Content (Join-Path $RootDir "gradle.properties") |
     Where-Object { $_ -match "^conduit\.version=" }) -replace "^conduit\.version=", ""
-$buildTime = (Get-Date -AsUTC).ToString("yyyy-MM-ddTHH:mm:ssZ")
-$gitHash   = (git -C $RootDir rev-parse --short HEAD 2>$null) ?? "unknown"
+$buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$gitHash   = (git -C $RootDir rev-parse --short HEAD 2>$null)
+if ([string]::IsNullOrWhiteSpace($gitHash)) { $gitHash = "unknown" }
 
 $resourceDir = Join-Path $RootDir "proxy\src\main\resources\com\velocitypowered\proxy\conduit"
 New-Item -ItemType Directory -Path $resourceDir -Force | Out-Null

@@ -200,6 +200,36 @@ http-path = "/metrics"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# [maintenance] — Network-wide maintenance mode
+# ─────────────────────────────────────────────────────────────────────────────
+# Reject non-exempt players with a custom message while you work on the network,
+# and optionally advertise a maintenance MOTD in the server-list ping. Toggle it
+# live with `/conduit maintenance on|off|status` (permission: conduit.admin).
+#
+# A player is allowed in if they hold the `conduit.maintenance.bypass` permission
+# OR their username appears in `allowlist` below (handy before a permissions
+# plugin has loaded). The active state is persisted to `maintenance.flag` so it
+# survives a restart — delete that file to clear maintenance manually.
+[maintenance]
+
+# Register the maintenance listeners. Set false to disable the feature entirely.
+enabled = true
+
+# Start the proxy already in maintenance mode.
+active-on-start = false
+
+# MiniMessage-formatted disconnect message shown to denied players.
+kick-message = "<red>The network is currently down for maintenance.\n<gray>Please check back soon."
+
+# MiniMessage-formatted MOTD shown in the server list while maintenance is active.
+# Leave blank ("") to keep the normal MOTD.
+motd = "<red><bold>⚠ Maintenance</bold></red>\n<gray>The network is temporarily offline."
+
+# Usernames (case-insensitive) always allowed to connect during maintenance.
+allowlist = []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # [commands] — Operator commands surfaced by Conduit
 # ─────────────────────────────────────────────────────────────────────────────
 [commands]

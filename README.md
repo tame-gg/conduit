@@ -30,6 +30,7 @@ backends.
 | **Bot filter** | Blocks IPs that repeatedly open TCP channels without completing the initial Minecraft handshake. |
 | **Channel guard** | Intercepts known cheat / exploit plugin-message channels (World-Downloader, X-Ray clients) and applies a drop / kick / log policy. |
 | **Attack mode** | `/conduit attackmode on/off/status` applies stricter live flood-mitigation limits without editing config. |
+| **Maintenance mode** | `/conduit maintenance on/off/status` closes the network to non-exempt players with a custom kick message and maintenance MOTD. Bypass via permission or username allow-list; state survives restarts. Replaces standalone Maintenance plugins. |
 | **Mod compatibility routing** | Optional per-backend allow rules for Vanilla, Fabric, Forge, NeoForge, and unknown modded clients. |
 | **Tab-complete cache** | Short-TTL LRU cache for backend tab-completion responses keyed on (server, prefix). Absorbs key-held tab spam at near-zero CPU. |
 | **Metrics JSON endpoint** | Optional loopback HTTP endpoint and `/conduit metrics json` expose diagnostics counters for dashboards. |
@@ -162,6 +163,13 @@ http-host = "127.0.0.1"
 http-port = 9589
 http-path = "/metrics"
 
+[maintenance]
+enabled         = true      # register the maintenance listeners
+active-on-start = false     # start the proxy already in maintenance
+kick-message    = "<red>The network is currently down for maintenance.\n<gray>Please check back soon."
+motd            = "<red><bold>⚠ Maintenance</bold></red>\n<gray>The network is temporarily offline."
+allowlist       = []        # usernames always allowed in during maintenance
+
 [commands]
 admin-enabled                   = true      # registers /conduit (permission: conduit.admin)
 modlist-enabled                 = true      # registers /modlist  (permission: conduit.modlist)
@@ -180,6 +188,7 @@ bundle-enabled                  = true      # extract bundled spark plugin; set 
 | `/conduit doctor` | Checks Conduit config and feature wiring, including fallback-server names and restart-required/experimental settings. | `conduit.admin` |
 | `/conduit metrics json` | Prints diagnostics counters as compact JSON. | `conduit.admin` |
 | `/conduit attackmode on \| off \| status` | Applies or restores stricter live flood-mitigation limits. | `conduit.admin` |
+| `/conduit maintenance on \| off \| status` | Toggles network-wide maintenance mode. Non-exempt players are rejected; state persists across restarts. | `conduit.admin` |
 | `/conduit config diff` | Shows changed config keys and whether they apply live or require restart. | `conduit.admin` |
 | `/conduit failover test <server>` | Shows which healthy fallback server would be selected if a backend failed. | `conduit.admin` |
 | `/conduit unblock <ip>` | Clears a bot-filter block on the given IP. | `conduit.admin` |
@@ -189,6 +198,7 @@ bundle-enabled                  = true      # extract bundled spark plugin; set 
 | `/sparkv` | Runs the bundled spark Velocity profiler. Alias: `/sparkvelocity`. | `spark.*` command permissions |
 
 The `conduit.channelguard.bypass` permission exempts staff accounts from `ChannelGuard` blocks.
+The `conduit.maintenance.bypass` permission lets staff connect while maintenance mode is active.
 
 ### Migrating from KnownPacksFix
 

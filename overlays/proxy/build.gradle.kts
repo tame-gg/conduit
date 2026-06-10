@@ -1,3 +1,4 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import com.github.jengelman.gradle.plugins.shadow.transformers.Log4j2PluginsCacheFileTransformer
 import java.net.URI
 import java.nio.file.Files
@@ -16,6 +17,22 @@ application {
     applicationDefaultJvmArgs += listOf("-Dvelocity.packet-decode-logging=true")
 }
 
+val relocations = mapOf(
+    "org.bstats" to "com.velocitypowered.proxy.bstats",
+)
+
+val relocatedLibraries: Configuration by configurations.creating {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+}
+// Keep the relocated libraries on the compile/runtime classpath so the proxy compiles against them
+// and the fat shadowJar continues to bundle them.
+configurations.named("implementation") { extendsFrom(relocatedLibraries) }
+
+// ── Conduit: bundled spark Velocity profiler ─────────────────────────────────
+// Conduit ships the official lucko/spark Velocity plugin inside the proxy jar and installs it on
+// first run (see BundledSparkInstaller). We download it at build time and verify its checksum so
+// the binary never lives in source control.
 val bundledSparkUrl = providers.gradleProperty("conduit.spark.velocity.url")
 val bundledSparkSha256 = providers.gradleProperty("conduit.spark.velocity.sha256")
 val bundledSparkJar = layout.buildDirectory.file("conduit/bundled/spark-velocity.jar")
@@ -40,7 +57,8 @@ val downloadBundledSpark by tasks.registering {
             .digest(tmp.readBytes())
             .joinToString("") { "%02x".format(it) }
         check(actualSha256 == bundledSparkSha256.get()) {
-            "Downloaded spark Velocity jar checksum mismatch: expected ${bundledSparkSha256.get()}, got $actualSha256"
+            "Downloaded spark Velocity jar checksum mismatch: " +
+                "expected ${bundledSparkSha256.get()}, got $actualSha256"
         }
 
         Files.move(
@@ -48,14 +66,6 @@ val downloadBundledSpark by tasks.registering {
             target.toPath(),
             StandardCopyOption.REPLACE_EXISTING
         )
-    }
-}
-
-tasks.processResources {
-    dependsOn(downloadBundledSpark)
-    from(bundledSparkJar) {
-        into("com/velocitypowered/proxy/conduit/bundled")
-        rename { "spark-velocity.jar" }
     }
 }
 
@@ -67,6 +77,24 @@ tasks {
             attributes["Multi-Release"] = "true"
             attributes["Enable-Native-Access"] = "ALL-UNNAMED"
             attributes["Enable-Final-Field-Mutation"] = "ALL-UNNAMED"
+        }
+    }
+
+    processResources {
+        // Embed :velocity-luckperms-integration as META-INF/velocityctd/integrations/velocity-luckperms-integration.jar
+        val lpJar = project(":velocity-luckperms-integration")
+            .tasks
+            .named<Jar>("jar")
+        from(lpJar.flatMap { it.archiveFile }) {
+            into("META-INF/velocityctd/integrations")
+            rename { "velocity-luckperms-integration.jar" }
+        }
+
+        // Conduit: embed the verified spark Velocity jar so it can be installed on first run.
+        dependsOn(downloadBundledSpark)
+        from(bundledSparkJar) {
+            into("com/velocitypowered/proxy/conduit/bundled")
+            rename { "spark-velocity.jar" }
         }
     }
 
@@ -139,22 +167,22 @@ tasks {
         // Exclude Checker Framework annotations
         exclude("org/checkerframework/checker/**")
 
-        relocate("org.bstats", "com.velocitypowered.proxy.bstats")
+        relocations.forEach { (from, to) -> relocate(from, to) }
 
         // Include Configurate 3
         val configurateBuildTask = project(":deprecated-configurate3").tasks.named("shadowJar")
         dependsOn(configurateBuildTask)
         from(zipTree(configurateBuildTask.map { it.outputs.files.singleFile }))
+    }
 
-        // Embed :velocity-luckperms-integration as META-INF/velocityctd/integrations/velocity-luckperms-integration.jar
-        val lpJar = project(":velocity-luckperms-integration")
-            .tasks
-            .named<Jar>("jar")
-        dependsOn(lpJar)
-        from(lpJar.flatMap { it.archiveFile }) {
-            into("META-INF/velocityctd/integrations")
-            rename { "velocity-luckperms-integration.jar" }
-        }
+    // A minimal shaded jar containing the proxy classes plus relocated copies of `relocatedLibraries`
+    // (and nothing else). The bootstrap embeds this as the proxy jar, while resolving every other
+    // dependency from Maven.
+    register<ShadowJar>("proxyRelocatedJar") {
+        archiveClassifier.set("relocated")
+        from(sourceSets["main"].output)
+        configurations = listOf(relocatedLibraries)
+        relocations.forEach { (from, to) -> relocate(from, to) }
     }
 
     runShadow {
@@ -211,11 +239,13 @@ dependencies {
     implementation(libs.adventure.text.serializer.json.legacy.impl)
     implementation(libs.adventure.facet)
     implementation(libs.completablefutures)
+    implementation(libs.component)
     implementation(libs.nightconfig)
-    implementation(libs.bstats)
+    relocatedLibraries(libs.bstats)
     implementation(libs.lmbda)
     implementation(libs.asm)
     implementation(libs.bundles.flare)
+    implementation(libs.uuid.creator)
     compileOnly(libs.spotbugs.annotations)
     compileOnly(libs.auto.service.annotations)
     testImplementation(libs.mockito)

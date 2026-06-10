@@ -95,6 +95,13 @@ public final class ConduitCommand {
                 .executes(ConduitCommand::attackModeOff))
             .then(BrigadierCommand.literalArgumentBuilder("status")
                 .executes(ConduitCommand::attackModeStatus)))
+        .then(BrigadierCommand.literalArgumentBuilder("maintenance")
+            .then(BrigadierCommand.literalArgumentBuilder("on")
+                .executes(ctx -> maintenance(ctx, true)))
+            .then(BrigadierCommand.literalArgumentBuilder("off")
+                .executes(ctx -> maintenance(ctx, false)))
+            .then(BrigadierCommand.literalArgumentBuilder("status")
+                .executes(ConduitCommand::maintenanceStatus)))
         .then(BrigadierCommand.literalArgumentBuilder("config")
             .then(BrigadierCommand.literalArgumentBuilder("diff")
                 .executes(ConduitCommand::configDiff)))
@@ -128,6 +135,8 @@ public final class ConduitCommand {
         + "— show diagnostics as JSON", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit attackmode on|off|status "
         + "— toggle stricter flood limits", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit maintenance on|off|status "
+        + "— toggle network maintenance mode", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit config diff              "
         + "— preview changed config keys", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit failover test <server>   "
@@ -195,6 +204,34 @@ public final class ConduitCommand {
     ctx.getSource().sendMessage(Component.text(
         "Conduit attack mode: " + (Conduit.get().isAttackModeEnabled() ? "ON" : "OFF"),
         NamedTextColor.AQUA));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int maintenance(CommandContext<CommandSource> ctx, boolean enable) {
+    var manager = Conduit.get().getMaintenanceManager();
+    boolean changed = manager.setActive(enable);
+    if (!changed) {
+      ctx.getSource().sendMessage(Component.text(
+          "Maintenance mode is already " + (enable ? "ON" : "OFF") + ".",
+          NamedTextColor.YELLOW));
+      return 0;
+    }
+    if (enable) {
+      ctx.getSource().sendMessage(Component.text(
+          "Maintenance mode ENABLED — non-exempt players can no longer join.",
+          NamedTextColor.YELLOW));
+    } else {
+      ctx.getSource().sendMessage(Component.text(
+          "Maintenance mode disabled — the network is open again.", NamedTextColor.GREEN));
+    }
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int maintenanceStatus(CommandContext<CommandSource> ctx) {
+    boolean active = Conduit.get().getMaintenanceManager().isActive();
+    ctx.getSource().sendMessage(Component.text(
+        "Maintenance mode: " + (active ? "ON" : "OFF"),
+        active ? NamedTextColor.YELLOW : NamedTextColor.AQUA));
     return Command.SINGLE_SUCCESS;
   }
 

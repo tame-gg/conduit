@@ -25,6 +25,7 @@ import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitMetricsServer;
 import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
 import com.velocitypowered.proxy.conduit.health.FallbackRouter;
+import com.velocitypowered.proxy.conduit.maintenance.MaintenanceManager;
 import com.velocitypowered.proxy.conduit.modded.ModTrackerListener;
 import com.velocitypowered.proxy.conduit.modded.ModdedClientTracker;
 import com.velocitypowered.proxy.conduit.modded.ModdedHandshakeCache;
@@ -72,6 +73,7 @@ public final class Conduit {
   private final TabCompleteCache tabCompleteCache;
   private final ChannelGuard channelGuard;
   private final ModCompatibilityRouter modCompatibilityRouter;
+  private final MaintenanceManager maintenanceManager;
   private volatile ConduitMetricsServer metricsServer;
   private volatile boolean attackModeEnabled;
 
@@ -117,6 +119,11 @@ public final class Conduit {
         : ChannelGuard.DISABLED;
     this.modCompatibilityRouter = new ModCompatibilityRouter(clientTracker,
         config.getModCompatibilityRules());
+    this.maintenanceManager = config.isMaintenanceFeatureEnabled()
+        ? new MaintenanceManager(configDir, config.isMaintenanceActiveOnStart(),
+            config.getMaintenanceKickMessage(), config.getMaintenanceMotd(),
+            config.getMaintenanceAllowlist())
+        : MaintenanceManager.DISABLED;
 
     logStartupSummary();
   }
@@ -166,6 +173,7 @@ public final class Conduit {
 
     channelGuard.register(plugin, proxy);
     modCompatibilityRouter.register(plugin, proxy);
+    maintenanceManager.register(plugin, proxy);
 
     startMetricsServerIfEnabled();
 
@@ -352,6 +360,11 @@ public final class Conduit {
     return channelGuard;
   }
 
+  /** Returns the active {@link MaintenanceManager}. */
+  public MaintenanceManager getMaintenanceManager() {
+    return maintenanceManager;
+  }
+
   /** Returns the Conduit build version string. */
   public String getConduitVersion() {
     return conduitVersion;
@@ -367,6 +380,14 @@ public final class Conduit {
       healthChecker.stop();
     } catch (RuntimeException e) {
       logger.warn("[Conduit] Error during shutdown: {}", e.getMessage());
+    }
+    ConduitMetricsServer server = metricsServer;
+    if (server != null) {
+      try {
+        server.close();
+      } catch (RuntimeException e) {
+        logger.warn("[Conduit] Error closing metrics endpoint: {}", e.getMessage());
+      }
     }
   }
 
@@ -399,6 +420,9 @@ public final class Conduit {
     logger.info("[Conduit]   channel-guard           = {} (action {}, {} patterns)",
         config.isChannelGuardEnabled(), config.getChannelGuardAction(),
         config.getChannelGuardBlockList().size());
+    logger.info("[Conduit]   maintenance             = {} (active {}, {} allow-listed)",
+        config.isMaintenanceFeatureEnabled(), maintenanceManager.isActive(),
+        config.getMaintenanceAllowlist().size());
     logger.info("[Conduit]   admin-commands          = {}", config.isAdminCommandsEnabled());
     logger.info("[Conduit]   modlist-command         = {}", config.isModListCommandEnabled());
   }

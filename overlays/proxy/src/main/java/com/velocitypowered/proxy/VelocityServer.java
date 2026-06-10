@@ -77,6 +77,7 @@ import com.velocitypowered.proxy.config.ProxyAddress;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.client.ConnectedPlayer;
 import com.velocitypowered.proxy.connection.client.PlayerRegistry;
+import com.velocitypowered.proxy.connection.player.resourcepack.TransferPackSecret;
 import com.velocitypowered.proxy.connection.player.resourcepack.VelocityResourcePackInfo;
 import com.velocitypowered.proxy.connection.util.ServerListPingHandler;
 import com.velocitypowered.proxy.console.VelocityConsole;
@@ -259,6 +260,12 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
    */
   private @MonotonicNonNull VelocityClusterProxyService clusterProxyService;
 
+  /**
+   * The HMAC secret used to sign and verify the applied-resource-packs transfer cookie.
+   * Initialized after Redis (or generated locally when Redis is disabled).
+   */
+  private @MonotonicNonNull TransferPackSecret transferPackSecret;
+
   VelocityServer(ProxyOptions options) {
     pluginManager = new VelocityPluginManager(this);
     eventManager = new VelocityEventManager(pluginManager);
@@ -300,6 +307,16 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     return redis;
   }
 
+  /**
+   * Returns the {@link TransferPackSecret} used to sign and verify the
+   * applied-resource-packs cookie carried across {@code transferToHost}.
+   *
+   * @return the transfer-pack secret holder
+   */
+  public TransferPackSecret getTransferPackSecret() {
+    return transferPackSecret;
+  }
+
   @Override
   public final VelocityConfiguration getConfiguration() {
     return this.configuration;
@@ -317,6 +334,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
   @Override
   public ProxyVersion getVersion() {
     Package pkg = VelocityServer.class.getPackage();
+    // Conduit: brand the proxy so /velocity version and the server list report Conduit.
     String implName = "Conduit-CTD";
     String implVersion = Optional.ofNullable(pkg)
         .map(Package::getImplementationVersion)
@@ -379,6 +397,11 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     pluginManager.registerPlugin(this.createVirtualPlugin());
     pluginManager.registerPlugin(this.createConduitVirtualPlugin());
 
+    // Conduit: initialise extensions and install the bundled spark plugin before the plugin
+    // directory is scanned, so spark is picked up on the same boot.
+    Conduit.init(Path.of("."));
+    Conduit.get().installBundledSpark();
+
     // Yes, you're reading that correctly. We're generating a 1024-bit RSA keypair. Sounds
     // dangerous, right? We're well within the realm of factoring such a key...
     //
@@ -393,9 +416,6 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     cm.logChannelInformation();
 
     this.doStartupConfigLoad();
-
-    Conduit.init(Path.of("."));
-    Conduit.get().installBundledSpark();
 
     if (getConfiguration().getRedis().getProxyId() == null && getConfiguration().getRedis().isEnabled()) {
       throw new IllegalArgumentException("'proxy-id' cannot be null when redis is enabled!");
@@ -434,6 +454,8 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
       }
     }
 
+    transferPackSecret = new TransferPackSecret(redis);
+
     registerCommands();
 
     // Re-send the available commands to all online players once a click-callback has been registered.
@@ -462,10 +484,12 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     // to fully initialize before we accept any connections to the server.
     eventManager.fire(new ProxyInitializeEvent()).join();
 
+    // Conduit: start subsystems that need a fully-initialised proxy (event listeners, health
+    // checker, commands, shutdown hook).
+    Conduit.get().start(this);
+
     // init console permissions after plugins are loaded
     console.setupPermissions();
-
-    Conduit.get().start(this);
 
     Integer port = this.options.getPort();
     if (port != null) {
@@ -676,7 +700,25 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     this.configuration = newConfiguration;
     eventManager.fireAndForget(new ProxyReloadEvent());
 
-    if (queueManager != null) {
+    boolean newQueueEnabled = newConfiguration.getQueue().isEnabled();
+    if (queueManager != null && !newQueueEnabled) {
+      for (ConnectedPlayer player : getAllPlayers()) {
+        queueManager.removePlayerEntirely(player.getUniqueId());
+      }
+      queueManager.teardown();
+      queueManager = null;
+    } else if (queueManager == null && newQueueEnabled) {
+      if (redis != null) {
+        queueManager = new RedisVelocityQueueManager(this);
+      } else {
+        if (newConfiguration.getRedis().isEnabled()) {
+          LOGGER.warn("Queue was enabled with Redis configured, but Redis cannot be started "
+              + "by a reload. Falling back to the local queue manager. Restart the proxy to "
+              + "use the Redis-backed queue.");
+        }
+        queueManager = new VelocityQueueManager(this);
+      }
+    } else if (queueManager != null) {
       queueManager.reload();
     }
 
@@ -949,12 +991,6 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
         eventManager.fire(new ProxyShutdownEvent()).join();
 
-        try {
-          Conduit.get().shutdown();
-        } catch (IllegalStateException ignored) {
-          // Conduit was never initialised — nothing to tear down.
-        }
-
         timedOut = !scheduler.shutdown() || timedOut;
 
         if (timedOut) {
@@ -976,6 +1012,13 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
       }
 
       this.playerRegistry.shutdown();
+
+      // Conduit: tear down background work (health checker, metrics endpoint).
+      try {
+        Conduit.get().shutdown();
+      } catch (IllegalStateException ignored) {
+        // Conduit was never initialised — nothing to tear down.
+      }
 
       // Since we manually removed the shutdown hook, we need to handle the shutdown ourselves.
       LogManager.shutdown();

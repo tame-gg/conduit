@@ -42,6 +42,10 @@ import org.jetbrains.annotations.NotNull;
  *
  * <p>This handler will queue up any packets that are sent to the client during this time, and send
  * them once the client has (re)entered the PLAY state.
+ *
+ * <p><b>Conduit:</b> in addition to the upstream byte-size guard, Conduit applies an optional
+ * per-queue depth cap (see {@code packet-queue-max-depth} in {@code conduit.toml}) and records a
+ * diagnostics counter each time the queue is flushed.
  */
 public class PlayPacketQueueInboundHandler extends ChannelDuplexHandler {
 
@@ -50,6 +54,7 @@ public class PlayPacketQueueInboundHandler extends ChannelDuplexHandler {
       "Queue too big (greater than " + MAXIMUM_SIZE + " bytes)");
 
   private final StateRegistry.PacketRegistry.ProtocolRegistry registry;
+  private final boolean discardStaleInbound;
 
   private final Queue<Object> queue = new ArrayDeque<>();
   private int queueSize = 0;
@@ -59,9 +64,12 @@ public class PlayPacketQueueInboundHandler extends ChannelDuplexHandler {
    *
    * @param version the protocol version
    * @param direction the direction of the packet flow (typically {@code SERVERBOUND})
+   * @param discardStaleInbound whether play packets from a previous session should be discarded
    */
-  public PlayPacketQueueInboundHandler(ProtocolVersion version, ProtocolUtils.Direction direction) {
+  public PlayPacketQueueInboundHandler(ProtocolVersion version, ProtocolUtils.Direction direction,
+                                       boolean discardStaleInbound) {
     this.registry = StateRegistry.CONFIG.getProtocolRegistry(direction, version);
+    this.discardStaleInbound = discardStaleInbound;
   }
 
   @Override
@@ -75,25 +83,29 @@ public class PlayPacketQueueInboundHandler extends ChannelDuplexHandler {
       }
     }
 
-    int length = 0;
-    if (msg instanceof ByteBuf) {
-      // keep track of raw packets
-      length = ((ByteBuf) msg).readableBytes();
-    } else if (msg instanceof ByteBufHolder) {
-      // keep track of bytebufs wrapped inside packets
-      length = ((ByteBufHolder) msg).content().readableBytes();
+    if (this.discardStaleInbound) {
+      // Re-entering configuration: this play packet belongs to the previous play session and
+      // must not be replayed into the next one, so drop it rather than queueing it.
+      ReferenceCountUtil.release(msg);
+      return;
     }
+
+    int length = queuedLength(msg);
     if (this.queueSize + length > MAXIMUM_SIZE) {
       ReferenceCountUtil.release(msg);
       throw QUEUE_LIMIT_FAILED;
     }
-    this.queueSize += length;
 
-    if (isConduitPacketQueueEnabled() && this.queue.size() >= Conduit.get().getConfig().getPacketQueueMaxDepth()) {
+    // Conduit: drop the oldest queued packet once the configured depth cap is reached, so a stalled
+    // CONFIG transition cannot accumulate an unbounded number of small packets.
+    if (isConduitPacketQueueEnabled()
+        && this.queue.size() >= Conduit.get().getConfig().getPacketQueueMaxDepth()) {
       Object dropped = this.queue.poll();
       this.queueSize -= queuedLength(dropped);
       ReferenceCountUtil.release(dropped);
     }
+
+    this.queueSize += length;
 
     // Otherwise, queue the packet
     this.queue.offer(msg);
@@ -113,8 +125,8 @@ public class PlayPacketQueueInboundHandler extends ChannelDuplexHandler {
 
   private void releaseQueue(ChannelHandlerContext ctx, boolean active) {
     // Handle all the queued packets
-    Object msg;
     int flushed = 0;
+    Object msg;
     while ((msg = this.queue.poll()) != null) {
       if (active) {
         ctx.fireChannelRead(msg);
@@ -124,7 +136,8 @@ public class PlayPacketQueueInboundHandler extends ChannelDuplexHandler {
       }
     }
     this.queueSize = 0;
-    if (active && isConduitPacketQueueEnabled()) {
+
+    if (active && flushed > 0 && isConduitPacketQueueEnabled()) {
       Conduit.get().getDiagnostics().recordPacketQueueFlush("serverbound", flushed);
     }
   }

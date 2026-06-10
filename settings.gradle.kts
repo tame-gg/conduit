@@ -5,6 +5,10 @@ dependencyResolutionManagement {
     repositories {
         mavenCentral()
         maven("https://repo.papermc.io/repository/maven-public/")
+        // Hosts gg.gemstone:component and other Velocity-CTD artifacts not on Maven Central.
+        maven("https://repo.velocityctd.com/releases") {
+            name = "velocityctdReleases"
+        }
     }
 }
 

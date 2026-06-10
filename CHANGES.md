@@ -4,6 +4,33 @@ All changes relative to upstream `GemstoneGG/Velocity-CTD @ dev`.
 
 ---
 
+## 1.3.3 — Maintenance Mode and Build Fixes
+
+### Added
+
+* Native **maintenance mode**: `/conduit maintenance on|off|status` plus a new `[maintenance]`
+  config section and `MaintenanceManager`. Rejects non-exempt logins with a configurable
+  MiniMessage message, optionally rewrites the server-list MOTD, supports permission and
+  username-allow-list bypass, and persists its active state to `maintenance.flag` across restarts.
+* Added `MaintenanceManagerTest` covering the deny decision, allow-list matching, flag persistence,
+  and startup restore.
+
+### Fixed
+
+* Removed `org.gradle.configureondemand=true` from `gradle.properties`. With configure-on-demand
+  the proxy project could be configured before `:deprecated-configurate3:shadowJar` was registered,
+  failing the build with `Task with name 'shadowJar' not found`.
+* Rebased the overlay `proxy/build.gradle.kts` onto current upstream Velocity-CTD `dev`. The old
+  copy had drifted and no longer matched the upstream module graph (`relocatedLibraries`,
+  `proxyRelocatedJar`, and the `component` / `uuid-creator` dependencies), which broke compilation.
+  Only Conduit's bundled-spark download is injected on top now.
+* `setup.ps1` no longer uses the PowerShell 7-only `??` operator or `Get-Date -AsUTC`, so it runs on
+  stock Windows PowerShell 5.1.
+* `Conduit.shutdown()` now closes the diagnostics metrics HTTP server, fixing a socket/thread leak
+  on proxy shutdown.
+
+---
+
 ## Unreleased — Operator Controls and Hot-Path Overlays
 
 ### Added

@@ -103,6 +103,13 @@ public final class ConduitConfig {
   private final int metricsHttpPort;
   private final String metricsHttpPath;
 
+  // ── Maintenance section ───────────────────────────────────────────────────
+  private final boolean maintenanceFeatureEnabled;
+  private final boolean maintenanceActiveOnStart;
+  private final String maintenanceKickMessage;
+  private final String maintenanceMotd;
+  private final List<String> maintenanceAllowlist;
+
   // ── Commands section ──────────────────────────────────────────────────────
   private final boolean adminCommandsEnabled;
   private final boolean modListCommandEnabled;
@@ -162,6 +169,12 @@ public final class ConduitConfig {
     this.metricsHttpHost = b.metricsHttpHost;
     this.metricsHttpPort = b.metricsHttpPort;
     this.metricsHttpPath = b.metricsHttpPath;
+
+    this.maintenanceFeatureEnabled = b.maintenanceFeatureEnabled;
+    this.maintenanceActiveOnStart = b.maintenanceActiveOnStart;
+    this.maintenanceKickMessage = b.maintenanceKickMessage;
+    this.maintenanceMotd = b.maintenanceMotd;
+    this.maintenanceAllowlist = b.maintenanceAllowlist;
 
     this.adminCommandsEnabled = b.adminCommandsEnabled;
     this.modListCommandEnabled = b.modListCommandEnabled;
@@ -282,6 +295,18 @@ public final class ConduitConfig {
       b.metricsHttpHost = metrics.getOrElse("http-host", "127.0.0.1");
       b.metricsHttpPort = metrics.getIntOrElse("http-port", 9589);
       b.metricsHttpPath = metrics.getOrElse("http-path", "/metrics");
+    }
+
+    CommentedConfig maintenance = toml.get("maintenance");
+    if (maintenance != null) {
+      b.maintenanceFeatureEnabled = maintenance.getOrElse("enabled", true);
+      b.maintenanceActiveOnStart = maintenance.getOrElse("active-on-start", false);
+      b.maintenanceKickMessage = maintenance.getOrElse("kick-message",
+          "<red>The network is currently down for maintenance.\n"
+              + "<gray>Please check back soon.");
+      b.maintenanceMotd = maintenance.getOrElse("motd",
+          "<red><bold>⚠ Maintenance</bold></red>\n<gray>The network is temporarily offline.");
+      b.maintenanceAllowlist = maintenance.getOrElse("allowlist", Collections.emptyList());
     }
 
     CommentedConfig commands = toml.get("commands");
@@ -631,6 +656,33 @@ public final class ConduitConfig {
     return metricsHttpPath;
   }
 
+  // ── Maintenance getters ───────────────────────────────────────────────────
+
+  /** Returns whether the maintenance-mode subsystem is enabled (registers its listeners). */
+  public boolean isMaintenanceFeatureEnabled() {
+    return maintenanceFeatureEnabled;
+  }
+
+  /** Returns whether maintenance mode should be active immediately on proxy start. */
+  public boolean isMaintenanceActiveOnStart() {
+    return maintenanceActiveOnStart;
+  }
+
+  /** Returns the MiniMessage kick message shown to denied players during maintenance. */
+  public String getMaintenanceKickMessage() {
+    return maintenanceKickMessage;
+  }
+
+  /** Returns the MiniMessage MOTD shown in the server-list ping during maintenance. */
+  public String getMaintenanceMotd() {
+    return maintenanceMotd;
+  }
+
+  /** Returns the list of usernames always permitted to connect during maintenance. */
+  public List<String> getMaintenanceAllowlist() {
+    return maintenanceAllowlist;
+  }
+
   // ── Command getters ───────────────────────────────────────────────────────
 
   /** Returns whether the {@code /conduit} admin command is registered. */
@@ -704,6 +756,14 @@ public final class ConduitConfig {
     String metricsHttpHost = "127.0.0.1";
     int metricsHttpPort = 9589;
     String metricsHttpPath = "/metrics";
+
+    boolean maintenanceFeatureEnabled = true;
+    boolean maintenanceActiveOnStart = false;
+    String maintenanceKickMessage =
+        "<red>The network is currently down for maintenance.\n<gray>Please check back soon.";
+    String maintenanceMotd =
+        "<red><bold>⚠ Maintenance</bold></red>\n<gray>The network is temporarily offline.";
+    List<String> maintenanceAllowlist = Collections.emptyList();
 
     boolean adminCommandsEnabled = true;
     boolean modListCommandEnabled = true;

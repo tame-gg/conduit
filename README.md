@@ -36,6 +36,7 @@ backends.
 | **Metrics JSON endpoint** | Optional loopback HTTP endpoint and `/conduit metrics json` expose diagnostics counters for dashboards. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
 | **Bundled spark profiler** | Ships the official `lucko/spark` Velocity plugin and installs it as `/sparkv` / `/sparkvelocity`. Skips if an operator-managed spark jar is present, and can be disabled via `conduit.toml → [spark] → bundle-enabled`. |
+| **Native LuckPerms** | Ships the official LuckPerms Velocity plugin and installs it on first run, so permissions, groups, and prefixes work out of the box. Skips if an operator-managed LuckPerms jar is present, and can be disabled via `conduit.toml → [luckperms] → bundle-enabled`. CTD's LuckPerms permission resolver then activates automatically. |
 | **Operator commands** | `/conduit reload \| diagnostics \| health \| doctor \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
 
 ---
@@ -176,6 +177,9 @@ modlist-enabled                 = true      # registers /modlist  (permission: c
 
 [spark]
 bundle-enabled                  = true      # extract bundled spark plugin; set false to suppress
+
+[luckperms]
+bundle-enabled                  = true      # extract bundled LuckPerms plugin; set false to suppress
 ```
 
 ### Operator commands

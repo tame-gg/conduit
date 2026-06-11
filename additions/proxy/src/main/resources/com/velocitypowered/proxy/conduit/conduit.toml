@@ -253,3 +253,16 @@ modlist-enabled = true
 # want it), set this to false.  If any spark jar already exists in plugins/,
 # Conduit leaves it alone regardless of this setting.
 bundle-enabled = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [luckperms] — Bundled permissions
+# ─────────────────────────────────────────────────────────────────────────────
+[luckperms]
+
+# Conduit ships the official LuckPerms Velocity plugin and extracts it into
+# plugins/ automatically, so permissions and groups work natively out of the
+# box.  Once LuckPerms is present, Conduit's advanced permission resolver lights
+# up automatically.  If you prefer to manage LuckPerms yourself (or don't want
+# it), set this to false.  If any LuckPerms jar already exists in plugins/,
+# Conduit leaves it alone regardless of this setting.
+bundle-enabled = true

@@ -25,6 +25,7 @@ import com.velocitypowered.proxy.conduit.diagnostics.ConduitDiagnostics;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitMetricsServer;
 import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
 import com.velocitypowered.proxy.conduit.health.FallbackRouter;
+import com.velocitypowered.proxy.conduit.luckperms.BundledLuckPermsInstaller;
 import com.velocitypowered.proxy.conduit.maintenance.MaintenanceManager;
 import com.velocitypowered.proxy.conduit.modded.ModTrackerListener;
 import com.velocitypowered.proxy.conduit.modded.ModdedClientTracker;
@@ -225,6 +226,33 @@ public final class Conduit {
       }
     } catch (IOException e) {
       logger.warn("[Conduit] Failed to install bundled spark plugin: {}", e.getMessage());
+    }
+  }
+
+  /**
+   * Installs Conduit's bundled LuckPerms Velocity plugin before Velocity scans the plugins
+   * directory, so permissions resolve natively on the same boot.
+   */
+  public void installBundledLuckPerms() {
+    if (!config.isLuckPermsBundleEnabled()) {
+      logger.info("[Conduit] Bundled LuckPerms is disabled in conduit.toml.");
+      return;
+    }
+    try {
+      BundledLuckPermsInstaller.InstallResult result =
+          BundledLuckPermsInstaller.install(configDir);
+      switch (result) {
+        case INSTALLED -> logger.info("[Conduit] Bundled LuckPerms Velocity plugin installed.");
+        case SKIPPED_EXISTING_LUCKPERMS -> logger.info("[Conduit] Existing LuckPerms plugin found;"
+            + " bundled LuckPerms was not installed.");
+        case SKIPPED_MISSING_RESOURCE -> logger.warn("[Conduit] Bundled LuckPerms plugin resource"
+            + " was not found in the Conduit jar.");
+        default -> {
+          // exhaustive
+        }
+      }
+    } catch (IOException e) {
+      logger.warn("[Conduit] Failed to install bundled LuckPerms plugin: {}", e.getMessage());
     }
   }
 

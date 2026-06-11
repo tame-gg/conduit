@@ -401,6 +401,7 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
     // directory is scanned, so spark is picked up on the same boot.
     Conduit.init(Path.of("."));
     Conduit.get().installBundledSpark();
+    Conduit.get().installBundledLuckPerms();
 
     // Yes, you're reading that correctly. We're generating a 1024-bit RSA keypair. Sounds
     // dangerous, right? We're well within the realm of factoring such a key...

@@ -4,6 +4,23 @@ All changes relative to upstream `GemstoneGG/Velocity-CTD @ dev`.
 
 ---
 
+## 1.3.4 — Native LuckPerms
+
+### Added
+
+* **Native LuckPerms** permissions. Conduit now ships the official LuckPerms Velocity plugin
+  (`5.5.55`, build `1643`) inside the proxy jar and extracts it into `plugins/` before Velocity
+  scans the directory, so permissions, groups, and prefixes work out of the box with no separate
+  download. Once present, upstream's `velocity-luckperms-integration` permission resolver activates
+  automatically (its API is now guaranteed on the classpath). Mirrors the existing bundled-spark
+  mechanism: `BundledLuckPermsInstaller`, a new `[luckperms]` config section with `bundle-enabled`
+  (default `true`), and `Conduit.installBundledLuckPerms()` wired into `VelocityServer` startup.
+* If an operator already manages a LuckPerms jar in `plugins/`, Conduit leaves it alone and removes
+  its own stale bundled copy, exactly like the spark behaviour.
+* The LuckPerms jar is downloaded and SHA-256-verified at build time (`downloadBundledLuckPerms`),
+  so the binary never lives in source control.
+* Added `BundledLuckPermsInstallerTest` and `ConduitConfig` coverage for the new section.
+
 ## 1.3.3 — Maintenance Mode and Build Fixes
 
 ### Added

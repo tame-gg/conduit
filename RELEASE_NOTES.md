@@ -1,3 +1,27 @@
+# Conduit 1.3.4
+
+Conduit 1.3.4 adds **native LuckPerms** — the official LuckPerms Velocity plugin is now bundled
+inside the proxy jar and installed automatically on first run, so permissions, groups, and prefixes
+work out of the box with no separate download.
+
+## New feature — Native LuckPerms
+
+Permissions normally require operators to download LuckPerms separately and drop it into `plugins/`.
+Conduit now ships it natively.
+
+* Conduit bundles the official **LuckPerms Velocity `5.5.55`** (build `1643`) inside the proxy jar
+  and extracts it into `plugins/` *before* Velocity scans the directory, so it loads on the same
+  boot — exactly like the bundled spark profiler.
+* Upstream Velocity-CTD's `velocity-luckperms-integration` permission resolver now lights up
+  automatically, because the LuckPerms API is guaranteed to be on the classpath.
+* **Operator-managed installs are respected.** If you already keep a LuckPerms jar in `plugins/`,
+  Conduit leaves it untouched and cleans up its own stale bundled copy. Don't want it bundled at
+  all? Set `bundle-enabled = false` under the new `[luckperms]` section in `conduit.toml`.
+* The jar is downloaded and **SHA-256-verified at build time**, so no binary lives in source
+  control and a tampered download fails the build.
+
+---
+
 # Conduit 1.3.3
 
 Conduit 1.3.3 adds native **maintenance mode**, fixes several build and runtime bugs, and refreshes

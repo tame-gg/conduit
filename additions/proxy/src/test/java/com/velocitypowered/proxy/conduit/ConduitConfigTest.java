@@ -20,6 +20,7 @@ package com.velocitypowered.proxy.conduit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -66,5 +67,25 @@ class ConduitConfigTest {
     ConduitConfig config = ConduitConfig.load(tempDir);
 
     assertFalse(config.isSparkBundleEnabled());
+  }
+
+  @Test
+  void luckPermsBundleEnabledByDefault() throws Exception {
+    ConduitConfig config = ConduitConfig.load(tempDir);
+
+    assertTrue(config.isLuckPermsBundleEnabled());
+  }
+
+  @Test
+  void loadsLuckPermsBundleDisabled() throws Exception {
+    Files.writeString(tempDir.resolve("conduit.toml"),
+        """
+        [luckperms]
+        bundle-enabled = false
+        """);
+
+    ConduitConfig config = ConduitConfig.load(tempDir);
+
+    assertFalse(config.isLuckPermsBundleEnabled());
   }
 }

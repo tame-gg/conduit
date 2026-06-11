@@ -69,6 +69,47 @@ val downloadBundledSpark by tasks.registering {
     }
 }
 
+// ── Conduit: bundled LuckPerms Velocity permission plugin ────────────────────
+// Conduit ships the official LuckPerms Velocity plugin inside the proxy jar and installs it on
+// first run (see BundledLuckPermsInstaller). LuckPerms remains a normal Velocity plugin at runtime;
+// the :velocity-luckperms-integration resolver lights up automatically once it is present. We
+// download it at build time and verify its checksum so the binary never lives in source control.
+val bundledLuckPermsUrl = providers.gradleProperty("conduit.luckperms.velocity.url")
+val bundledLuckPermsSha256 = providers.gradleProperty("conduit.luckperms.velocity.sha256")
+val bundledLuckPermsJar = layout.buildDirectory.file("conduit/bundled/luckperms-velocity.jar")
+
+val downloadBundledLuckPerms by tasks.registering {
+    inputs.property("url", bundledLuckPermsUrl)
+    inputs.property("sha256", bundledLuckPermsSha256)
+    outputs.file(bundledLuckPermsJar)
+
+    doLast {
+        val target = bundledLuckPermsJar.get().asFile
+        target.parentFile.mkdirs()
+        val tmp = target.resolveSibling("${target.name}.tmp")
+
+        URI(bundledLuckPermsUrl.get()).toURL().openStream().use { input ->
+            tmp.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        val actualSha256 = MessageDigest.getInstance("SHA-256")
+            .digest(tmp.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        check(actualSha256 == bundledLuckPermsSha256.get()) {
+            "Downloaded LuckPerms Velocity jar checksum mismatch: " +
+                "expected ${bundledLuckPermsSha256.get()}, got $actualSha256"
+        }
+
+        Files.move(
+            tmp.toPath(),
+            target.toPath(),
+            StandardCopyOption.REPLACE_EXISTING
+        )
+    }
+}
+
 tasks {
     jar {
         manifest {
@@ -95,6 +136,13 @@ tasks {
         from(bundledSparkJar) {
             into("com/velocitypowered/proxy/conduit/bundled")
             rename { "spark-velocity.jar" }
+        }
+
+        // Conduit: embed the verified LuckPerms Velocity jar so it can be installed on first run.
+        dependsOn(downloadBundledLuckPerms)
+        from(bundledLuckPermsJar) {
+            into("com/velocitypowered/proxy/conduit/bundled")
+            rename { "luckperms-velocity.jar" }
         }
     }
 

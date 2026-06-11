@@ -117,6 +117,9 @@ public final class ConduitConfig {
   // ── Spark section ─────────────────────────────────────────────────────────
   private final boolean sparkBundleEnabled;
 
+  // ── LuckPerms section ─────────────────────────────────────────────────────
+  private final boolean luckPermsBundleEnabled;
+
   private ConduitConfig(Builder b) {
     validate(b);
     this.maxKnownPacks = b.maxKnownPacks;
@@ -180,6 +183,8 @@ public final class ConduitConfig {
     this.modListCommandEnabled = b.modListCommandEnabled;
 
     this.sparkBundleEnabled = b.sparkBundleEnabled;
+
+    this.luckPermsBundleEnabled = b.luckPermsBundleEnabled;
   }
 
   /**
@@ -318,6 +323,11 @@ public final class ConduitConfig {
     CommentedConfig spark = toml.get("spark");
     if (spark != null) {
       b.sparkBundleEnabled = spark.getOrElse("bundle-enabled", true);
+    }
+
+    CommentedConfig luckperms = toml.get("luckperms");
+    if (luckperms != null) {
+      b.luckPermsBundleEnabled = luckperms.getOrElse("bundle-enabled", true);
     }
 
     CommentedConfig diag = toml.get("diagnostics");
@@ -702,6 +712,13 @@ public final class ConduitConfig {
     return sparkBundleEnabled;
   }
 
+  // ── LuckPerms getters ─────────────────────────────────────────────────────
+
+  /** Returns whether Conduit should extract the bundled LuckPerms plugin on startup. */
+  public boolean isLuckPermsBundleEnabled() {
+    return luckPermsBundleEnabled;
+  }
+
   // ── Builder ───────────────────────────────────────────────────────────────
 
   /** Mutable builder used internally by {@link #fromToml} to construct a {@link ConduitConfig}. */
@@ -769,6 +786,8 @@ public final class ConduitConfig {
     boolean modListCommandEnabled = true;
 
     boolean sparkBundleEnabled = true;
+
+    boolean luckPermsBundleEnabled = true;
 
     /**
      * Default channel blocklist for {@code ChannelGuard}: well-known World-Downloader and X-Ray

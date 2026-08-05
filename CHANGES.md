@@ -4,6 +4,22 @@ All changes relative to upstream `GemstoneGG/Velocity-CTD @ libdeflate`.
 
 ---
 
+## 1.6.3 — LuckPerms permission suggestions
+
+### Fixed — maintenance bypass (and other conduit.* nodes) now autocomplete in LuckPerms
+
+* Velocity has no permission registry. LuckPerms only suggests nodes it has seen checked (or that
+  were inserted into its internal `PermissionRegistry`). `conduit.maintenance.bypass` is checked
+  only while maintenance mode is active, so it never appeared for autofill in `/lpv` or the web
+  editor.
+* Added `ConduitPermissions` (canonical catalogue) and `LuckPermsPermissionSeeder`, which runs
+  after plugins load and publishes every first-class `conduit.*` node into LuckPerms via
+  `PermissionRegistry.insert` (with a console `hasPermission` fallback). Safe no-op when LuckPerms
+  is absent.
+* Bundled LuckPerms Velocity jar bumped `5.5.55` → `5.5.71` (previous download URL 404'd).
+
+---
+
 ## 1.5.0 — Command forwarding & self-updating config
 
 ### Added — native command forwarding (`com.velocitypowered.proxy.conduit.forward`)

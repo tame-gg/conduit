@@ -214,6 +214,11 @@ The `conduit.channelguard.bypass` permission exempts staff accounts from `Channe
 The `conduit.maintenance.bypass` permission lets staff connect while maintenance mode is active.
 The `conduit.update.notify` permission makes staff see the update notice on join (see below).
 
+Conduit publishes these `conduit.*` nodes into LuckPerms' suggestion tree at startup (when LuckPerms
+is present), so they autocomplete in `/lpv` and the web editor even though Velocity has no
+permission registry. Grant them like any other node, e.g.
+`/lpv user <name> permission set conduit.maintenance.bypass true`.
+
 ### Update notifications
 
 Conduit checks [GitHub Releases](https://github.com/tame-gg/conduit/releases) for a newer version

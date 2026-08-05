@@ -208,8 +208,10 @@ http-path = "/metrics"
 #
 # A player is allowed in if they hold the `conduit.maintenance.bypass` permission
 # OR their username appears in `allowlist` below (handy before a permissions
-# plugin has loaded). The active state is persisted to `maintenance.flag` so it
-# survives a restart — delete that file to clear maintenance manually.
+# plugin has loaded). Conduit seeds that bypass node (and other conduit.* nodes)
+# into LuckPerms at startup so it autocompletes in /lpv and the web editor.
+# The active state is persisted to `maintenance.flag` so it survives a restart —
+# delete that file to clear maintenance manually.
 [maintenance]
 
 # Register the maintenance listeners. Set false to disable the feature entirely.

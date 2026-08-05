@@ -27,6 +27,7 @@ import com.velocitypowered.proxy.conduit.forward.CommandForwarder;
 import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
 import com.velocitypowered.proxy.conduit.health.FallbackRouter;
 import com.velocitypowered.proxy.conduit.luckperms.BundledLuckPermsInstaller;
+import com.velocitypowered.proxy.conduit.luckperms.LuckPermsPermissionSeeder;
 import com.velocitypowered.proxy.conduit.maintenance.MaintenanceManager;
 import com.velocitypowered.proxy.conduit.modded.ModTrackerListener;
 import com.velocitypowered.proxy.conduit.modded.ModdedClientTracker;
@@ -220,6 +221,10 @@ public final class Conduit {
         updateChecker.checkAsync();
       }
     }
+
+    // Publish conduit.* nodes (esp. conduit.maintenance.bypass) into LuckPerms suggestions.
+    // Must run after plugins have loaded so the LuckPerms plugin instance is available.
+    LuckPermsPermissionSeeder.seed(proxy);
 
     logger.info("[Conduit] All subsystems started against proxy.");
   }

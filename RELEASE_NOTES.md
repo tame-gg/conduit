@@ -1,3 +1,20 @@
+# Conduit 1.6.3
+
+## Fixed
+
+- **LuckPerms now autocompletes Conduit permissions (including maintenance bypass).** Velocity has
+  no permission registry, so nodes that Conduit only checks rarely — especially
+  `conduit.maintenance.bypass`, which is evaluated only while maintenance mode is active — never
+  appeared in `/lpv` tab-complete or the LuckPerms web editor. Conduit now seeds its known
+  `conduit.*` nodes into LuckPerms' suggestion tree at startup when LuckPerms is present
+  (`conduit.admin`, `conduit.modlist`, `conduit.maintenance.bypass`, `conduit.channelguard.bypass`,
+  `conduit.update.notify`, `conduit.forward.execute`).
+
+## Changed
+
+- Bundled LuckPerms Velocity plugin updated from `5.5.55` → `5.5.71` (download URL refresh; the
+  previous build id 404'd).
+
 # Conduit 1.6.2
 
 ## Fixed (security)

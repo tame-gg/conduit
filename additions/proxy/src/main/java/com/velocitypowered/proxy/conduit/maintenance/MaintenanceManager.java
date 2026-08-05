@@ -51,6 +51,10 @@ import org.apache.logging.log4j.Logger;
  * an owner get in even before any permissions plugin has loaded, which is exactly the moment
  * maintenance mode tends to be toggled. Either one grants access.
  *
+ * <p>The {@value #BYPASS_PERMISSION} node is published into LuckPerms' suggestion tree at startup
+ * (see {@link com.velocitypowered.proxy.conduit.luckperms.LuckPermsPermissionSeeder}) so it
+ * autocompletes in {@code /lpv} and the web editor despite Velocity having no permission registry.
+ *
  * <h3>Persistence</h3>
  * The runtime toggle is mirrored to {@code <configDir>/maintenance.flag} so that maintenance state
  * survives a proxy restart — otherwise a crash-restart during maintenance would silently reopen

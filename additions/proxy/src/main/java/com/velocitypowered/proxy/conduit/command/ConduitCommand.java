@@ -29,6 +29,7 @@ import com.velocitypowered.proxy.conduit.ConduitConfig;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitConfigDiff;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitDoctor;
 import com.velocitypowered.proxy.conduit.diagnostics.ConduitMetricsSnapshot;
+import com.velocitypowered.proxy.conduit.health.FallbackRouter;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import net.kyori.adventure.text.Component;
@@ -46,6 +47,9 @@ import org.apache.logging.log4j.Logger;
  *   <li>{@code /conduit reload} — re-reads {@code conduit.toml} and applies live values.</li>
  *   <li>{@code /conduit diagnostics} — prints the diagnostics counter snapshot.</li>
  *   <li>{@code /conduit health} — prints the backend health summary.</li>
+ *   <li>{@code /conduit drain <server>} — stops routing new players to a backend (and moves the
+ *       ones already on it away) ahead of a restart; {@code /conduit undrain <server>} reverses
+ *       it.</li>
  *   <li>{@code /conduit unblock <ip>} — clears a {@code BotFilter} block on the given IP.</li>
  *   <li>{@code /conduit cache invalidate <ip>} — drops cached MOTD and handshake entries for
  *       the given IP.</li>
@@ -87,7 +91,9 @@ public final class ConduitCommand {
             .executes(ctx -> doctor(ctx, proxy)))
         .then(BrigadierCommand.literalArgumentBuilder("metrics")
             .then(BrigadierCommand.literalArgumentBuilder("json")
-                .executes(ConduitCommand::metricsJson)))
+                .executes(ConduitCommand::metricsJson))
+            .then(BrigadierCommand.literalArgumentBuilder("prometheus")
+                .executes(ConduitCommand::metricsPrometheus)))
         .then(BrigadierCommand.literalArgumentBuilder("attackmode")
             .then(BrigadierCommand.literalArgumentBuilder("on")
                 .executes(ConduitCommand::attackModeOn))
@@ -109,6 +115,12 @@ public final class ConduitCommand {
             .then(BrigadierCommand.literalArgumentBuilder("test")
                 .then(BrigadierCommand.requiredArgumentBuilder("server", StringArgumentType.string())
                     .executes(ConduitCommand::failoverTest))))
+        .then(BrigadierCommand.literalArgumentBuilder("drain")
+            .then(BrigadierCommand.requiredArgumentBuilder("server", StringArgumentType.string())
+                .executes(ctx -> drain(ctx, proxy, true))))
+        .then(BrigadierCommand.literalArgumentBuilder("undrain")
+            .then(BrigadierCommand.requiredArgumentBuilder("server", StringArgumentType.string())
+                .executes(ctx -> drain(ctx, proxy, false))))
         .then(BrigadierCommand.literalArgumentBuilder("unblock")
             .then(BrigadierCommand.requiredArgumentBuilder("ip", StringArgumentType.string())
                 .executes(ConduitCommand::unblock)))
@@ -131,8 +143,8 @@ public final class ConduitCommand {
         + "— show backend health", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit doctor                   "
         + "— check config and feature wiring", NamedTextColor.GRAY));
-    source.sendMessage(Component.text("/conduit metrics json             "
-        + "— show diagnostics as JSON", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit metrics json|prometheus  "
+        + "— show diagnostics counters", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit attackmode on|off|status "
         + "— toggle stricter flood limits", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit maintenance on|off|status "
@@ -141,6 +153,8 @@ public final class ConduitCommand {
         + "— preview changed config keys", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit failover test <server>   "
         + "— show fallback target", NamedTextColor.GRAY));
+    source.sendMessage(Component.text("/conduit drain|undrain <server>   "
+        + "— close/open a backend to new players", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit unblock <ip>             "
         + "— clear a bot-filter block", NamedTextColor.GRAY));
     source.sendMessage(Component.text("/conduit cache invalidate <ip>    "
@@ -150,10 +164,21 @@ public final class ConduitCommand {
 
   private static int reload(CommandContext<CommandSource> ctx) {
     try {
-      Conduit.get().reload();
-      ctx.getSource().sendMessage(Component.text(
-          "Conduit configuration reloaded.", NamedTextColor.GREEN));
+      String summary = Conduit.get().reload();
+      // The summary names the keys that changed but could not be applied, so an operator is never
+      // left believing a restart-only change took effect.
+      ctx.getSource().sendMessage(Component.text(summary,
+          summary.contains("restart") ? NamedTextColor.YELLOW : NamedTextColor.GREEN));
       return Command.SINGLE_SUCCESS;
+    } catch (IllegalArgumentException badConfig) {
+      // A rejected value or malformed file is an operator typo: the message says what to fix, and
+      // a stack trace for it is noise. The previous config stays live.
+      ctx.getSource().sendMessage(Component.text(
+          "Reload failed: " + badConfig.getMessage(), NamedTextColor.RED));
+      ctx.getSource().sendMessage(Component.text(
+          "The previously loaded configuration is still in effect.", NamedTextColor.GRAY));
+      logger.warn("[Conduit] /conduit reload failed: {}", badConfig.getMessage());
+      return 0;
     } catch (RuntimeException ex) {
       ctx.getSource().sendMessage(Component.text(
           "Reload failed: " + ex.getMessage(), NamedTextColor.RED));
@@ -183,6 +208,13 @@ public final class ConduitCommand {
   private static int metricsJson(CommandContext<CommandSource> ctx) {
     ctx.getSource().sendMessage(Component.text(
         ConduitMetricsSnapshot.from(Conduit.get().getDiagnostics()).toJson(), NamedTextColor.AQUA));
+    return Command.SINGLE_SUCCESS;
+  }
+
+  private static int metricsPrometheus(CommandContext<CommandSource> ctx) {
+    ctx.getSource().sendMessage(Component.text(
+        ConduitMetricsSnapshot.from(Conduit.get().getDiagnostics()).toPrometheus(),
+        NamedTextColor.AQUA));
     return Command.SINGLE_SUCCESS;
   }
 
@@ -261,6 +293,36 @@ public final class ConduitCommand {
     ctx.getSource().sendMessage(Component.text(
         "No healthy fallback target is available for " + server + ".", NamedTextColor.YELLOW));
     return 0;
+  }
+
+  private static int drain(CommandContext<CommandSource> ctx, ProxyServer proxy, boolean drain) {
+    String serverName = StringArgumentType.getString(ctx, "server");
+    if (proxy.getServer(serverName).isEmpty()) {
+      ctx.getSource().sendMessage(Component.text(
+          "No such server: " + serverName, NamedTextColor.RED));
+      return 0;
+    }
+    boolean changed = Conduit.get().getHealthChecker().setDrained(serverName, drain);
+    if (!changed) {
+      ctx.getSource().sendMessage(Component.text(
+          serverName + " is already " + (drain ? "draining" : "accepting players") + ".",
+          NamedTextColor.YELLOW));
+      return 0;
+    }
+    if (!drain) {
+      ctx.getSource().sendMessage(Component.text(
+          serverName + " is accepting players again.", NamedTextColor.GREEN));
+      return Command.SINGLE_SUCCESS;
+    }
+    int moved = Conduit.get().getFallbackRouter().evacuate(serverName);
+    ctx.getSource().sendMessage(Component.text(
+        serverName + " is draining — no new players will be routed there; moved "
+            + moved + " player" + (moved == 1 ? "" : "s") + " off it.",
+        NamedTextColor.YELLOW));
+    ctx.getSource().sendMessage(Component.text(
+        "Staff with '" + FallbackRouter.DRAIN_BYPASS_PERMISSION
+            + "' can still join it and were not moved.", NamedTextColor.GRAY));
+    return Command.SINGLE_SUCCESS;
   }
 
   private static int unblock(CommandContext<CommandSource> ctx) {

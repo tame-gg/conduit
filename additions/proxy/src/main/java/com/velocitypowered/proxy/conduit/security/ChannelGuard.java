@@ -54,7 +54,8 @@ import org.apache.logging.log4j.Logger;
  * lets staff use otherwise-blocked admin tools without weakening the protection for the rest of
  * the network.
  *
- * <p>The singleton {@link #DISABLED} instance registers no listeners and performs no checks.
+ * <p>The guard can be switched off — and back on — at runtime via {@link #setEnabled(boolean)},
+ * so {@code /conduit reload} can apply a change to {@code channel-guard} without a restart.
  */
 public class ChannelGuard {
 
@@ -76,27 +77,6 @@ public class ChannelGuard {
     }
   }
 
-  /**
-   * Sentinel instance used when the channel guard is disabled. No listeners are registered.
-   */
-  public static final ChannelGuard DISABLED = new ChannelGuard(
-      List.of(), Action.LOG, null) {
-    @Override
-    public void register(Object plugin, ProxyServer proxy) {
-      // no-op
-    }
-
-    @Override
-    public void onPluginMessage(PluginMessageEvent event) {
-      // no-op
-    }
-
-    @Override
-    public boolean isBlocked(String channelId) {
-      return false;
-    }
-  };
-
   private static final Logger logger = LogManager.getLogger(ChannelGuard.class);
   /** Component shown to kicked players. Operators cannot configure this yet by design. */
   private static final Component KICK_MESSAGE =
@@ -105,30 +85,65 @@ public class ChannelGuard {
   /** Permission key that lets staff bypass all channel-guard checks. */
   public static final String BYPASS_PERMISSION = "conduit.channelguard.bypass";
 
-  private final List<String> blockList;
-  private final Action action;
+  private volatile boolean enabled;
+  private volatile List<String> blockList;
+  private volatile Action action;
   private final ConduitDiagnostics diagnostics;
 
   /**
-   * Constructs a {@code ChannelGuard}.
+   * Constructs an enabled {@code ChannelGuard}.
    *
    * @param blockList   the list of channel patterns to block; each is either an exact id or a
    *                    namespace prefix ending in {@code ':'}
    * @param action      the action to take when a blocked channel is observed
    * @param diagnostics the diagnostics instance used to record block events; may be {@code null}
-   *                    for the {@link #DISABLED} sentinel
    */
   public ChannelGuard(List<String> blockList, Action action, ConduitDiagnostics diagnostics) {
+    this(blockList, action, diagnostics, true);
+  }
+
+  /**
+   * Constructs a {@code ChannelGuard} in the given initial state.
+   *
+   * @param blockList   the list of channel patterns to block
+   * @param action      the action to take when a blocked channel is observed
+   * @param diagnostics the diagnostics instance used to record block events; may be {@code null}
+   * @param enabled     whether the guard is active; a disabled guard inspects nothing
+   */
+  public ChannelGuard(List<String> blockList, Action action, ConduitDiagnostics diagnostics,
+      boolean enabled) {
     this.blockList = List.copyOf(blockList);
     this.action = action;
     this.diagnostics = diagnostics;
+    this.enabled = enabled;
   }
 
-  /** Registers this guard as a {@link PluginMessageEvent} listener on the given proxy. */
+  /**
+   * Registers this guard as a {@link PluginMessageEvent} listener on the given proxy.
+   *
+   * <p>Registered whether or not the guard is currently enabled, so {@code /conduit reload} can
+   * switch it on without a restart.
+   */
   public void register(Object plugin, ProxyServer proxy) {
     proxy.getEventManager().register(plugin, this);
-    logger.info("[Conduit] ChannelGuard registered (action={}, {} patterns).",
-        action, blockList.size());
+    logger.info("[Conduit] ChannelGuard registered (enabled={}, action={}, {} patterns).",
+        enabled, action, blockList.size());
+  }
+
+  /** Returns whether the channel guard is currently active. */
+  public boolean isEnabled() {
+    return enabled;
+  }
+
+  /** Turns the channel guard on or off at runtime. */
+  public void setEnabled(boolean enabled) {
+    this.enabled = enabled;
+  }
+
+  /** Replaces the blocklist and action, e.g. after {@code /conduit reload}. */
+  public void reconfigure(List<String> blockList, Action action) {
+    this.blockList = List.copyOf(blockList);
+    this.action = action;
   }
 
   /**
@@ -140,7 +155,7 @@ public class ChannelGuard {
    */
   @Subscribe(order = PostOrder.EARLY)
   public void onPluginMessage(PluginMessageEvent event) {
-    if (!(event.getSource() instanceof Player player)) {
+    if (!enabled || !(event.getSource() instanceof Player player)) {
       return;
     }
     if (player.hasPermission(BYPASS_PERMISSION)) {
@@ -160,6 +175,9 @@ public class ChannelGuard {
    * channels in their output.
    */
   public boolean isBlocked(String channelId) {
+    if (!enabled) {
+      return false;
+    }
     String normalised = channelId.toLowerCase(Locale.ROOT);
     for (String pattern : blockList) {
       String lowerPattern = pattern.toLowerCase(Locale.ROOT);

@@ -24,6 +24,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import java.net.InetAddress;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
@@ -31,55 +32,37 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Caches {@link ServerPing} responses per connecting {@link InetAddress} to reduce the cost of
- * repeated server-list pings from the same host.
+ * Caches {@link ServerPing} responses to reduce the cost of repeated server-list pings from the
+ * same host.
+ *
+ * <h3>Cache key</h3>
+ * An entry is keyed by the connecting address <em>together with</em> the client's protocol version
+ * and the hostname it connected to. All three change what the correct answer is: a ping response
+ * commonly carries a version-specific label or a per-forced-host MOTD, and one address can be a
+ * whole household or a carrier NAT. Keying on the address alone would hand one client the answer
+ * built for another.
  *
  * <p>The listener runs at {@link PostOrder#LATE} so other plugins still see the event first
  * and can mutate the ping; the cache reads the final ping after them and serves it on subsequent
  * hits.  Stale entries are pruned lazily on cache writes; LRU eviction caps memory at
- * {@value #MAX_ENTRIES} unique addresses.
+ * {@value #MAX_ENTRIES} unique keys.
  *
- * <p>The singleton {@link #DISABLED} instance performs no caching and registers no listeners.
+ * <p>Caching can be switched off — and back on — at runtime via {@link #setEnabled(boolean)}.
  */
 public class MotdCache {
 
-  /**
-   * Sentinel instance used when MOTD caching is disabled.
-   * No listeners are registered and no state is maintained.
-   */
-  public static final MotdCache DISABLED = new MotdCache(2000) {
-    @Override
-    public void register(Object plugin, ProxyServer proxy) {
-      // no-op — MOTD caching is disabled
-    }
-
-    @Override
-    public void onProxyPing(ProxyPingEvent event) {
-      // no-op
-    }
-
-    @Override
-    public boolean invalidate(InetAddress address) {
-      return false;
-    }
-
-    @Override
-    public int clearAll() {
-      return 0;
-    }
-  };
-
   private static final Logger logger = LogManager.getLogger(MotdCache.class);
 
-  /** Cap on distinct remote addresses cached; protects against IPv6 scanner flooding. */
+  /** Cap on distinct cache keys held; protects against IPv6 scanner flooding. */
   static final int MAX_ENTRIES = 4096;
 
+  private volatile boolean enabled;
   private volatile long ttlMs;
   private final ReentrantLock lock = new ReentrantLock();
-  private final LinkedHashMap<InetAddress, CachedPing> cache =
+  private final LinkedHashMap<Key, CachedPing> cache =
       new LinkedHashMap<>(64, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<InetAddress, CachedPing> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<Key, CachedPing> eldest) {
           return size() > MAX_ENTRIES;
         }
       };
@@ -92,18 +75,46 @@ public class MotdCache {
    * @param ttlMs the time-to-live in milliseconds for each cached {@link ServerPing}
    */
   public MotdCache(long ttlMs) {
+    this(ttlMs, true);
+  }
+
+  /**
+   * Constructs a {@code MotdCache} in the given initial state.
+   *
+   * @param ttlMs   the time-to-live in milliseconds for each cached {@link ServerPing}
+   * @param enabled whether caching is active; a disabled cache neither reads nor stores entries
+   */
+  public MotdCache(long ttlMs, boolean enabled) {
     this.ttlMs = ttlMs;
+    this.enabled = enabled;
   }
 
   /**
    * Registers this cache as a {@link ProxyPingEvent} listener on the given proxy.
+   *
+   * <p>The listener is registered whether or not caching is currently enabled, so that
+   * {@code /conduit reload} can switch it on without a restart; a disabled cache returns from the
+   * handler immediately.
    *
    * @param plugin the owning plugin instance used for event registration
    * @param proxy  the proxy server whose event manager will receive registrations
    */
   public void register(Object plugin, ProxyServer proxy) {
     proxy.getEventManager().register(plugin, this);
-    logger.info("[Conduit] MotdCache registered (TTL {}ms).", ttlMs);
+    logger.info("[Conduit] MotdCache registered (enabled={}, TTL {}ms).", enabled, ttlMs);
+  }
+
+  /** Returns whether MOTD caching is currently active. */
+  public boolean isEnabled() {
+    return enabled;
+  }
+
+  /** Turns MOTD caching on or off at runtime. Cached entries are dropped when it is turned off. */
+  public void setEnabled(boolean enabled) {
+    this.enabled = enabled;
+    if (!enabled) {
+      clearAll();
+    }
   }
 
   /**
@@ -114,12 +125,15 @@ public class MotdCache {
    */
   @Subscribe(order = PostOrder.LATE)
   public void onProxyPing(ProxyPingEvent event) {
-    InetAddress address = event.getConnection().getRemoteAddress().getAddress();
+    if (!enabled) {
+      return;
+    }
+    Key key = keyFor(event);
     long now = System.currentTimeMillis();
 
     lock.lock();
     try {
-      CachedPing cached = cache.get(address);
+      CachedPing cached = cache.get(key);
       if (cached != null && now - cached.timestamp() < ttlMs) {
         event.setPing(cached.ping());
         cacheHits.increment();
@@ -127,11 +141,20 @@ public class MotdCache {
       }
 
       cacheMisses.increment();
-      cache.put(address, new CachedPing(event.getPing(), now));
+      cache.put(key, new CachedPing(event.getPing(), now));
       pruneExpired(now);
     } finally {
       lock.unlock();
     }
+  }
+
+  private static Key keyFor(ProxyPingEvent event) {
+    InetAddress address = event.getConnection().getRemoteAddress().getAddress();
+    int protocol = event.getConnection().getProtocolVersion().getProtocol();
+    String virtualHost = event.getConnection().getVirtualHost()
+        .map(host -> host.getHostString().toLowerCase(Locale.ROOT))
+        .orElse("");
+    return new Key(address, protocol, virtualHost);
   }
 
   /**
@@ -170,7 +193,8 @@ public class MotdCache {
   public boolean invalidate(InetAddress address) {
     lock.lock();
     try {
-      return cache.remove(address) != null;
+      // One address can hold several entries (different client versions or hostnames).
+      return cache.keySet().removeIf(key -> key.address().equals(address));
     } finally {
       lock.unlock();
     }
@@ -204,5 +228,15 @@ public class MotdCache {
    * @param timestamp the {@link System#currentTimeMillis()} value when this entry was created
    */
   private record CachedPing(ServerPing ping, long timestamp) {
+  }
+
+  /**
+   * Identity of a cacheable ping: who asked, with which protocol, and under which hostname.
+   *
+   * @param address     the connecting address
+   * @param protocol    the client's protocol version number
+   * @param virtualHost the lower-cased hostname the client connected to, or {@code ""} if none
+   */
+  private record Key(InetAddress address, int protocol, String virtualHost) {
   }
 }

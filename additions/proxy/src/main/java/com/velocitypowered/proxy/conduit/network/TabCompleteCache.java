@@ -24,16 +24,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Short-TTL cache of backend tab-completion responses keyed on {@code (server, prefix)}.
+ * Short-TTL cache of backend tab-completion responses keyed on {@code (player, server, prefix)}.
  *
  * <p>Tab-complete spam is common on creative/build servers — a player holding a key down can fire
  * dozens of completion requests per second. Without caching, every request round-trips to the
  * backend, which (for modded backends) often touches command-tree state and produces a sizeable
  * response. A 1–2 second TTL is short enough that operators rarely notice staleness yet absorbs
  * the spam burst at near-zero CPU on the proxy.
+ *
+ * <h3>Why the key includes the player</h3>
+ * A completion list is computed <em>for a player</em>: backends filter Brigadier suggestions by
+ * what that player is allowed to run, and {@code TabCompleteEvent} listeners routinely tailor the
+ * list further. Sharing one entry across everyone on a server would replay an administrator's
+ * command list — and their argument completions — to the next player who typed the same prefix.
+ * The player's UUID is therefore part of the key, which costs hit rate and buys correctness: the
+ * spam burst this cache exists to absorb comes from one player holding a key down, and that still
+ * hits.
  *
  * <h3>Why per-server keys?</h3>
  * Tab-completion is server-specific: the same prefix on the {@code lobby} server and the
@@ -51,64 +61,51 @@ import java.util.concurrent.locks.ReentrantLock;
  * separate overlay step. The expected pattern in the handler is:
  * <pre>{@code
  * TabCompleteCache cache = Conduit.get().getTabCompleteCache();
- * Optional<TabCompleteCache.CachedResponse> cached = cache.lookup(serverName, prefix);
+ * Optional<TabCompleteCache.CachedResponse> cached = cache.lookup(playerId, serverName, prefix);
  * if (cached.isPresent()) {
  *   sendToPlayer(cached.get());
  *   return;
  * }
- * forwardToBackend(req, response -> cache.store(serverName, prefix, response));
+ * forwardToBackend(req, response -> cache.store(playerId, serverName, prefix, response));
  * }</pre>
  *
- * <p>The {@link #DISABLED} sentinel is returned when the cache is turned off in
- * {@code conduit.toml}; all lookups miss, all stores are no-ops, so the hot path keeps the
- * existing behaviour with zero overhead.
+ * <p>Caching can be switched off — and back on — at runtime via {@link #setEnabled(boolean)}; a
+ * disabled cache misses every lookup and ignores every store.
  */
 public class TabCompleteCache {
 
-  /**
-   * Sentinel instance used when tab-complete caching is disabled.
-   * All lookups miss; stores are no-ops. The constructor arguments are placeholders that satisfy
-   * the superclass; every method that would read them is overridden.
-   */
-  public static final TabCompleteCache DISABLED = new TabCompleteCache(1, 1, null) {
-    @Override
-    public Optional<CachedResponse> lookup(String server, String prefix) {
-      return Optional.empty();
-    }
-
-    @Override
-    public void store(String server, String prefix, CachedResponse response) {
-      // no-op
-    }
-
-    @Override
-    public int invalidateServer(String server) {
-      return 0;
-    }
-
-    @Override
-    public int size() {
-      return 0;
-    }
-  };
-
-  private final long ttlMs;
+  private volatile boolean enabled;
+  private volatile long ttlMs;
   private final int maxEntries;
   private final ConduitDiagnostics diagnostics;
   private final ReentrantLock lock = new ReentrantLock();
   private final LinkedHashMap<Key, TimedResponse> cache;
 
   /**
-   * Constructs a tab-complete cache.
+   * Constructs an enabled tab-complete cache.
    *
    * @param ttlMs       how long entries remain valid, in milliseconds
    * @param maxEntries  the cap on total cached entries before LRU eviction
    * @param diagnostics the diagnostics instance used to record hits/misses
    */
   public TabCompleteCache(long ttlMs, int maxEntries, ConduitDiagnostics diagnostics) {
+    this(ttlMs, maxEntries, diagnostics, true);
+  }
+
+  /**
+   * Constructs a tab-complete cache in the given initial state.
+   *
+   * @param ttlMs       how long entries remain valid, in milliseconds
+   * @param maxEntries  the cap on total cached entries before LRU eviction
+   * @param diagnostics the diagnostics instance used to record hits/misses
+   * @param enabled     whether caching is active
+   */
+  public TabCompleteCache(long ttlMs, int maxEntries, ConduitDiagnostics diagnostics,
+      boolean enabled) {
     this.ttlMs = ttlMs;
     this.maxEntries = maxEntries;
     this.diagnostics = diagnostics;
+    this.enabled = enabled;
     this.cache = new LinkedHashMap<>(64, 0.75f, true) {
       @Override
       protected boolean removeEldestEntry(Map.Entry<Key, TimedResponse> eldest) {
@@ -117,14 +114,41 @@ public class TabCompleteCache {
     };
   }
 
+  /** Returns whether tab-complete caching is currently active. */
+  public boolean isEnabled() {
+    return enabled;
+  }
+
+  /** Turns caching on or off at runtime. Cached entries are dropped when it is turned off. */
+  public void setEnabled(boolean enabled) {
+    this.enabled = enabled;
+    if (!enabled) {
+      clearAll();
+    }
+  }
+
+  /** Updates the entry time-to-live for future lookups. */
+  public void setTtlMs(long ttlMs) {
+    this.ttlMs = ttlMs;
+  }
+
+  /** Returns the entry time-to-live in milliseconds. */
+  public long getTtlMs() {
+    return ttlMs;
+  }
+
   /**
-   * Returns a cached response if one exists and has not expired.
+   * Returns a cached response if one exists for this player and has not expired.
    *
+   * @param player the UUID of the player who sent the request
    * @param server the backend server name the player is currently connected to
    * @param prefix the tab-complete prefix sent by the player
    */
-  public Optional<CachedResponse> lookup(String server, String prefix) {
-    Key key = new Key(server, prefix);
+  public Optional<CachedResponse> lookup(UUID player, String server, String prefix) {
+    if (!enabled) {
+      return Optional.empty();
+    }
+    Key key = new Key(player, server, prefix);
     long now = System.currentTimeMillis();
     lock.lock();
     try {
@@ -149,11 +173,11 @@ public class TabCompleteCache {
    * Stores a backend response for later retrieval. Existing entries with the same key are replaced
    * and any expired entries are pruned lazily.
    */
-  public void store(String server, String prefix, CachedResponse response) {
-    if (response == null) {
+  public void store(UUID player, String server, String prefix, CachedResponse response) {
+    if (!enabled || response == null) {
       return;
     }
-    Key key = new Key(server, prefix);
+    Key key = new Key(player, server, prefix);
     long now = System.currentTimeMillis();
     lock.lock();
     try {
@@ -172,8 +196,35 @@ public class TabCompleteCache {
     lock.lock();
     try {
       int before = cache.size();
-      cache.entrySet().removeIf(e -> e.getKey().server.equals(server));
+      cache.entrySet().removeIf(e -> e.getKey().server().equals(server));
       return before - cache.size();
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
+   * Removes every cached entry belonging to {@code player}. Returns the number of evicted entries.
+   * Call this when a player disconnects, or when their permissions may have changed.
+   */
+  public int invalidatePlayer(UUID player) {
+    lock.lock();
+    try {
+      int before = cache.size();
+      cache.entrySet().removeIf(e -> e.getKey().player().equals(player));
+      return before - cache.size();
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /** Removes every cached entry. Returns the number of evicted entries. */
+  public int clearAll() {
+    lock.lock();
+    try {
+      int before = cache.size();
+      cache.clear();
+      return before;
     } finally {
       lock.unlock();
     }
@@ -222,8 +273,9 @@ public class TabCompleteCache {
     }
   }
 
-  private record Key(String server, String prefix) {
+  private record Key(UUID player, String server, String prefix) {
     private Key {
+      Objects.requireNonNull(player, "player");
       Objects.requireNonNull(server, "server");
       Objects.requireNonNull(prefix, "prefix");
     }

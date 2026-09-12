@@ -27,6 +27,7 @@ import static com.velocitypowered.proxy.network.Connections.READ_TIMEOUT;
 
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.conduit.Conduit;
+import com.velocitypowered.proxy.conduit.security.BotFilter;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.client.HandshakeSessionHandler;
@@ -61,6 +62,8 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
   @Override
   protected void initChannel(Channel ch) {
     InetAddress remoteAddress = null;
+    // Conduit: the handshake attempt is per channel, not per address — see BotFilter.
+    BotFilter.Attempt handshakeAttempt = null;
     if (ch.remoteAddress() instanceof InetSocketAddress remote) {
       remoteAddress = remote.getAddress();
       if (remoteAddress != null) {
@@ -74,7 +77,10 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
           ch.close();
           return;
         }
-        conduit.getBotFilter().recordHandshakeStart(remoteAddress);
+        handshakeAttempt = conduit.getBotFilter().beginHandshake(remoteAddress);
+        if (handshakeAttempt != null) {
+          ch.attr(BotFilter.ATTEMPT_ATTRIBUTE).set(handshakeAttempt);
+        }
       }
     }
 
@@ -92,13 +98,11 @@ public class ServerChannelInitializer extends ChannelInitializer<Channel> {
         new HandshakeSessionHandler(connection, this.server));
     ch.pipeline().addLast(Connections.HANDLER, connection);
 
-    if (remoteAddress != null) {
-      InetAddress scheduledAddress = remoteAddress;
-      ch.eventLoop().schedule(() -> {
-        if (ch.isActive()) {
-          Conduit.get().getBotFilter().recordHandshakeTimeout(scheduledAddress);
-        }
-      }, Conduit.get().getBotFilter().getHandshakeTimeoutMs(), TimeUnit.MILLISECONDS);
+    if (handshakeAttempt != null) {
+      BotFilter.Attempt scheduledAttempt = handshakeAttempt;
+      ch.eventLoop().schedule(
+          () -> Conduit.get().getBotFilter().timeoutHandshake(scheduledAttempt),
+          Conduit.get().getBotFilter().getHandshakeTimeoutMs(), TimeUnit.MILLISECONDS);
     }
 
     VelocityConfiguration.PacketLimiterConfig packetLimiterConfig =

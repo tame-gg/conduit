@@ -407,7 +407,16 @@ public class VelocityServer implements ProxyServer, ForwardingAudience {
 
     // Conduit: initialise extensions and install the bundled spark / LuckPerms plugins before the
     // plugin directory is scanned, so they are picked up on the same boot.
-    Conduit.init(Path.of("."));
+    // A broken conduit.toml is an operator typo, not a bug: report what is wrong with the file and
+    // stop, rather than letting a parser stack trace out of main with no mention of the file.
+    try {
+      Conduit.init(Path.of("."));
+    } catch (IllegalArgumentException badConfig) {
+      LOGGER.error("[Conduit] Refusing to start: {}", badConfig.getMessage());
+      LOGGER.error("[Conduit] Fix conduit.toml and start the proxy again.");
+      System.exit(1);
+      return;
+    }
     Conduit.get().installBundledSpark();
     Conduit.get().installBundledLuckPerms();
 

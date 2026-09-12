@@ -52,8 +52,8 @@ Floods, cheats, and the connections you never see.
 
 | Feature | Description |
 |---------|-------------|
-| **Per-IP connection throttle** | Drops TCP connections at the Netty accept stage before any packet data is read, protecting against bot floods. |
-| **Bot filter** | Blocks IPs that repeatedly open TCP channels without completing the initial Minecraft handshake. |
+| **Per-source connection throttle** | Drops TCP connections at the Netty accept stage before any packet data is read, protecting against bot floods. Sources are grouped by network prefix (IPv4 `/32`, IPv6 `/64` by default), so an attacker with one IPv6 allocation cannot get a fresh counter per connection. Drops are logged in aggregate, never one line per dropped connection. |
+| **Bot filter** | Blocks sources that repeatedly open TCP channels and then never speak Minecraft at all. Handshakes are tracked per connection, so the counter still fires when hundreds of connections from one source are in flight at once — which is what a flood looks like. A server-list ping counts as a complete, legitimate transaction. |
 | **Channel guard** | Intercepts known cheat / exploit plugin-message channels (World-Downloader, X-Ray clients) and applies a drop / kick / log policy. |
 | **Attack mode** | `/conduit attackmode on/off/status` applies stricter live flood-mitigation limits without editing config. |
 
@@ -65,14 +65,16 @@ Running the network, not just booting it.
 |---------|-------------|
 | **Maintenance mode** | `/conduit maintenance on/off/status` closes the network to non-exempt players with a custom kick message and maintenance MOTD. Bypass via permission or username allow-list; state survives restarts. Replaces standalone Maintenance plugins. |
 | **Version gate** | Pin the Minecraft versions your network accepts via `conduit.toml → [versions]` — a contiguous range, or an explicit list of individual versions for a set with gaps in it. Accepted clients see the normal MOTD, ping, and player count; others get the vanilla "incompatible version" server-list entry labelled with your supported versions, and a join attempt is refused with a message naming them. |
-| **Backend health checking** | Pings all registered backends on a configurable interval and marks unhealthy servers so they are skipped by fallback routing. |
-| **Fallback routing on kick** | Automatically redirects kicked players to a healthy fallback server instead of disconnecting them. |
+| **Backend health checking** | Pings all registered backends on a configurable interval and marks unhealthy servers so they are skipped by fallback routing. Hysteresis (3 failures down, 2 successes up by default) keeps one missed ping — a long GC pause is enough — from flapping a backend out of routing. |
+| **Backend draining** | `/conduit drain <server>` closes a backend to new players and moves the ones already on it to a routable server, then `/conduit undrain <server>` reopens it — the rolling-restart workflow, without editing config or kicking anyone. Staff holding `conduit.drain.bypass` can still join a draining server and are never moved off it, so you can watch the restart from inside. |
+| **Fallback routing** | When a player loses their server — kicked, the backend died under them, or their very first connection on login could not be reached — Conduit sends them to the first entry in `fallback-servers` that is registered, healthy, and not draining, instead of letting them be disconnected. Velocity's own `try` list is respected first and only overridden when the server it picked is one Conduit knows is down. A player who still holds a seat on their current server is left where they are, and repeated bounces fall back to a plain disconnect rather than looping. |
 | **Graceful shutdown** | Transfers connected players to a fallback server (or disconnects with a friendly message) before the proxy exits. |
 | **Command forwarding** | Optional backend→proxy command execution over plugin messaging, wire-compatible with the VelocityCommandForward plugin. A backend's `/proxyexec <cmd>` runs on the proxy as console or the forwarding player. Off by default; enable via `conduit.toml → [forwarding] → command-forwarding`. Replaces the proxy-side VelocityCommandForward plugin. |
 | **Update checker** | Asynchronously checks GitHub Releases for a newer Conduit version, caches the result, compares semantic versions, and tells `conduit.update.notify` staff how many releases they are behind on join. Modular provider design; configurable via `conduit.toml → [update]`. |
 | **Self-updating config** | `conduit.toml` is topped up on every start: options added in newer Conduit versions appear automatically with documented defaults, existing values and comments are preserved, and no manual delete/regenerate is ever needed. |
-| **Operator commands** | `/conduit reload \| diagnostics \| health \| doctor \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
-| **Metrics JSON endpoint** | Optional loopback HTTP endpoint and `/conduit metrics json` expose diagnostics counters for dashboards. |
+| **Operator commands** | `/conduit reload \| diagnostics \| health \| doctor \| drain <server> \| unblock <ip> \| cache invalidate <ip>` and `/modlist [player]` — no extra plugin needed. |
+| **Live reload** | `/conduit reload` applies every setting it can without a restart — including switching a subsystem on or off — and then names the specific keys you changed that a restart is still required for, instead of a standing list of caveats. |
+| **Metrics endpoint** | Optional loopback HTTP endpoint serving both compact JSON and the Prometheus text exposition format (`/metrics/prometheus`), with an optional bearer token. Same counters from `/conduit metrics json\|prometheus`. |
 | **Structured diagnostics** | Optional lock-free counters and structured log output for profiling; zero overhead when disabled. |
 | **Native LuckPerms** | Ships the official LuckPerms Velocity plugin and installs it on first run, so permissions, groups, and prefixes work out of the box. Skips if an operator-managed LuckPerms jar is present, and can be disabled via `conduit.toml → [luckperms] → bundle-enabled`. CTD's LuckPerms permission resolver then activates automatically. |
 | **Bundled spark profiler** | Ships the official `lucko/spark` Velocity plugin and installs it as `/sparkv` / `/sparkvelocity`. Skips if an operator-managed spark jar is present, and can be disabled via `conduit.toml → [spark] → bundle-enabled`. |
@@ -171,7 +173,10 @@ packet-queue-optimization          = true
 packet-queue-max-depth             = 256
 connection-throttle                = true
 connection-throttle-max-per-second = 30
-tab-complete-cache                 = false     # opt-in; integrates via overlay (see CHANGES)
+connection-throttle-ipv4-prefix    = 32        # group IPv4 sources by this CIDR prefix
+connection-throttle-ipv6-prefix    = 64        # /64 is the smallest block one subscriber gets
+connection-throttle-log-interval-ms = 5000     # aggregate drop reports per source; 0 logs each
+tab-complete-cache                 = false     # opt-in; keyed per (player, server, prefix)
 tab-complete-cache-ttl-ms          = 1500
 tab-complete-cache-max-entries     = 1024
 
@@ -183,6 +188,8 @@ slow-connection-threshold-ms = 3000
 [server]
 health-check-enabled            = true
 health-check-interval-ms        = 10000
+health-check-failure-threshold  = 3         # consecutive failed pings before UNHEALTHY
+health-check-success-threshold  = 2         # consecutive successes before HEALTHY again
 fallback-servers                = []        # ordered list of preferred fallback server names
 motd-cache-enabled              = true
 motd-cache-ttl-ms               = 2000
@@ -213,7 +220,9 @@ mod-compatibility = []          # e.g. ["lobby=VANILLA,FABRIC", "modded=NEOFORGE
 http-enabled = false
 http-host = "127.0.0.1"
 http-port = 9589
-http-path = "/metrics"
+http-path = "/metrics"                      # compact JSON
+prometheus-path = "/metrics/prometheus"     # Prometheus text exposition
+auth-token = ""                             # when set, require Authorization: Bearer <token>
 
 [maintenance]
 enabled         = true      # register the maintenance listeners
@@ -241,6 +250,9 @@ command-forwarding              = false     # opt-in; backend → proxy command 
 channel                         = "velocity_command_forward:main"  # must match backend plugin
 require-permission              = false     # gate player-context commands on conduit.forward.execute
 log-forwarded-commands          = true      # echo the backend log line to the proxy console
+allowed-servers                 = []        # backends allowed to forward; empty = all
+command-allowlist               = []        # root command words allowed; empty = all
+command-denylist                = []        # root command words always refused
 
 [spark]
 bundle-enabled                  = true      # extract bundled spark plugin; set false to suppress
@@ -259,16 +271,18 @@ seamless-server-switches        = false
 
 | Command | What it does | Permission |
 |---------|--------------|------------|
-| `/conduit reload` | Re-reads `conduit.toml` and applies live-tunable values (handshake TTL, throttle rate, diagnostics flags, version range). | `conduit.admin` |
+| `/conduit reload` | Re-reads `conduit.toml` and applies everything that can be applied live, including turning subsystems on or off. Reports the specific changed keys that still need a restart. | `conduit.admin` |
 | `/conduit diagnostics` | Prints the counter snapshot — connections, cache hits, throttles, slow logins, channels blocked, etc. | `conduit.admin` |
 | `/conduit health` | Prints the per-backend health summary (`HEALTHY` / `UNHEALTHY`, failure count, last-checked timestamp). | `conduit.admin` |
 | `/conduit doctor` | Checks Conduit config and feature wiring, including fallback-server names and restart-required/experimental settings. | `conduit.admin` |
-| `/conduit metrics json` | Prints diagnostics counters as compact JSON. | `conduit.admin` |
+| `/conduit metrics json \| prometheus` | Prints diagnostics counters as compact JSON, or in the Prometheus text exposition format. | `conduit.admin` |
 | `/conduit attackmode on \| off \| status` | Applies or restores stricter live flood-mitigation limits. | `conduit.admin` |
 | `/conduit maintenance on \| off \| status` | Toggles network-wide maintenance mode. Non-exempt players are rejected; state persists across restarts. | `conduit.admin` |
 | `/conduit config diff` | Shows changed config keys and whether they apply live or require restart. | `conduit.admin` |
 | `/conduit failover test <server>` | Shows which healthy fallback server would be selected if a backend failed. | `conduit.admin` |
-| `/conduit unblock <ip>` | Clears a bot-filter block on the given IP. | `conduit.admin` |
+| `/conduit drain <server>` | Closes a backend to new players and moves the players on it to a routable server. Use before a rolling restart. | `conduit.admin` |
+| `/conduit undrain <server>` | Reopens a drained backend to new players. | `conduit.admin` |
+| `/conduit unblock <ip>` | Clears a bot-filter block on the source network covering the given IP. | `conduit.admin` |
 | `/conduit cache invalidate <ip>` | Drops cached MOTD and modded-handshake entries for the given IP. | `conduit.admin` |
 | `/modlist` | Lists every connected player with their detected mod loader and channel count. | `conduit.modlist` |
 | `/modlist <player>` | Shows the detailed channel and known-pack list for one player. Tab-completes player names. | `conduit.modlist` |
@@ -331,14 +345,21 @@ plugin, and it speaks the **same plugin-messaging protocol**, so you keep using 
   **forwarding player** (player-originated, if still online).
 - **Only real backend connections are honoured** — a client cannot forge these messages to execute
   commands. Set `require-permission = true` to additionally require the forwarding player to hold
-  `conduit.forward.execute`; console-originated commands are always allowed.
+  `conduit.forward.execute`.
+- **A console-originated command carries the proxy console's full authority**, so "it came from a
+  backend" is only as strong as the least-trusted backend on your network. If any of them is
+  community-run, name the ones that may forward in `allowed-servers`, and narrow what they may run
+  with `command-allowlist` / `command-denylist` (matched on the root command word).
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `command-forwarding` | `false` | Master switch. Off preserves current behaviour. |
 | `channel` | `velocity_command_forward:main` | Plugin-messaging channel; must match the backend plugin. |
 | `require-permission` | `false` | Require `conduit.forward.execute` for player-context commands. |
-| `log-forwarded-commands` | `true` | Echo the backend-supplied log line to the proxy console. |
+| `log-forwarded-commands` | `true` | Echo the backend-supplied log line to the proxy console (flattened to one line and length-capped, so a backend cannot forge log entries). |
+| `allowed-servers` | `[]` | Backends allowed to forward commands. Empty means every backend. |
+| `command-allowlist` | `[]` | Root command words a backend may forward. Empty means every command. |
+| `command-denylist` | `[]` | Root command words always refused, regardless of the allow-list. |
 
 > **Note:** plugin messaging needs at least one player online for a console-originated backend
 > command to reach the proxy — a Minecraft limitation, not a Conduit one.

@@ -49,6 +49,9 @@ import com.velocitypowered.proxy.conduit.version.VersionGate;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -98,37 +101,35 @@ public final class Conduit {
     this.handshakeCache = config.isHandshakeCacheEnabled()
         ? new ModdedHandshakeCache(config.getHandshakeCacheTtlSeconds())
         : ModdedHandshakeCache.NOOP;
-    this.connectionThrottler = config.isConnectionThrottleEnabled()
-        ? new ConnectionThrottler(config.getConnectionThrottleMaxPerSecond())
-        : ConnectionThrottler.UNLIMITED;
+    this.connectionThrottler = new ConnectionThrottler(
+        config.getConnectionThrottleMaxPerSecond(), config.isConnectionThrottleEnabled());
+    this.connectionThrottler.setPrefixes(config.getConnectionThrottleIpv4Prefix(),
+        config.getConnectionThrottleIpv6Prefix());
+    this.connectionThrottler.setLogIntervalMs(config.getConnectionThrottleLogIntervalMs());
     this.diagnostics = new ConduitDiagnostics(config);
 
-    this.healthChecker = config.isHealthCheckEnabled()
-        ? new BackendHealthChecker(config.getHealthCheckIntervalMs())
-        : BackendHealthChecker.DISABLED;
+    this.healthChecker = new BackendHealthChecker(config.getHealthCheckIntervalMs(),
+        config.getHealthCheckFailureThreshold(), config.getHealthCheckSuccessThreshold(),
+        config.isHealthCheckEnabled());
     this.fallbackRouter = FallbackRouter.DISABLED;
-    this.motdCache = config.isMotdCacheEnabled()
-        ? new MotdCache(config.getMotdCacheTtlMs())
-        : MotdCache.DISABLED;
+    this.motdCache = new MotdCache(config.getMotdCacheTtlMs(), config.isMotdCacheEnabled());
     this.gracefulShutdown = config.isGracefulShutdownEnabled()
         ? new GracefulShutdown(config.getGracefulShutdownTimeoutMs(),
             config.getGracefulShutdownMessage(),
             config.getFallbackServers())
         : null;
-    this.botFilter = config.isBotFilterEnabled()
-        ? new BotFilter(config.getBotFilterTimeoutMs(), config.getBotFilterThreshold())
-        : BotFilter.DISABLED;
+    this.botFilter = new BotFilter(config.getBotFilterTimeoutMs(), config.getBotFilterThreshold(),
+        config.isBotFilterEnabled());
+    this.botFilter.setPrefixes(config.getConnectionThrottleIpv4Prefix(),
+        config.getConnectionThrottleIpv6Prefix());
 
     this.clientTracker = new ModdedClientTracker();
     this.clientTrackerListener = new ModTrackerListener(clientTracker);
-    this.tabCompleteCache = config.isTabCompleteCacheEnabled()
-        ? new TabCompleteCache(config.getTabCompleteCacheTtlMs(),
-            config.getTabCompleteCacheMaxEntries(), diagnostics)
-        : TabCompleteCache.DISABLED;
-    this.channelGuard = config.isChannelGuardEnabled()
-        ? new ChannelGuard(config.getChannelGuardBlockList(),
-            ChannelGuard.Action.parse(config.getChannelGuardAction()), diagnostics)
-        : ChannelGuard.DISABLED;
+    this.tabCompleteCache = new TabCompleteCache(config.getTabCompleteCacheTtlMs(),
+        config.getTabCompleteCacheMaxEntries(), diagnostics, config.isTabCompleteCacheEnabled());
+    this.channelGuard = new ChannelGuard(config.getChannelGuardBlockList(),
+        ChannelGuard.Action.parse(config.getChannelGuardAction()), diagnostics,
+        config.isChannelGuardEnabled());
     this.modCompatibilityRouter = new ModCompatibilityRouter(clientTracker,
         config.getModCompatibilityRules());
     this.maintenanceManager = config.isMaintenanceFeatureEnabled()
@@ -137,10 +138,10 @@ public final class Conduit {
             config.getMaintenanceAllowlist())
         : MaintenanceManager.DISABLED;
     this.versionGate = new VersionGate(config.getVersionPolicy());
-    this.commandForwarder = config.isCommandForwardingEnabled()
-        ? new CommandForwarder(config.getCommandForwardingChannel(),
-            config.isCommandForwardingRequirePermission(), config.isCommandForwardingLog())
-        : CommandForwarder.DISABLED;
+    this.commandForwarder = new CommandForwarder(config.getCommandForwardingChannel(),
+        config.isCommandForwardingRequirePermission(), config.isCommandForwardingLog(),
+        config.getCommandForwardingAllowedServers(), config.getCommandForwardingAllowlist(),
+        config.getCommandForwardingDenylist(), config.isCommandForwardingEnabled());
 
     if (config.isUpdateCheckEnabled()) {
       GitHubReleaseProvider provider = new GitHubReleaseProvider(
@@ -242,6 +243,8 @@ public final class Conduit {
           config.getMetricsHttpHost(),
           config.getMetricsHttpPort(),
           config.getMetricsHttpPath(),
+          config.getMetricsPrometheusPath(),
+          config.getMetricsAuthToken(),
           diagnostics);
       metricsServer.start();
     } catch (IOException e) {
@@ -302,22 +305,65 @@ public final class Conduit {
   }
 
   /**
-   * Reloads conduit.toml and pushes new values into the subsystems that support live tuning.
+   * Reloads conduit.toml and pushes the new values into every subsystem that can take them
+   * without a restart — including turning a subsystem on or off, which earlier releases could not
+   * do because a disabled subsystem was a do-nothing sentinel object chosen at boot.
    *
-   * <p>Live-tunable: handshake cache TTL, connection throttler rate, diagnostics flags, the
-   * advertised client-version range, max known packs (via {@link ConduitConfig#applyLiveValues}).
+   * <p>What genuinely cannot be applied live is bound to something the proxy did once at startup:
+   * the write-buffer watermarks (set when the listener was bound), the graceful-shutdown handler
+   * (registered against the JVM shutdown hook), the metrics endpoint (a bound socket), and the
+   * bundled-plugin installers (they ran before the plugin scan). Rather than printing a fixed list
+   * of caveats, the reload compares the two configs and names the keys that actually changed and
+   * were ignored — the list is silent when nothing of the sort changed.
    *
-   * <p>Restart-required: write-buffer watermarks (bound at listener bind time), backend health-check
-   * interval, MOTD TTL, graceful-shutdown configuration, bot-filter thresholds, fallback-server
-   * list. These are logged as ignored so operators are not misled.
+   * @return a human-readable summary of what was applied and what still needs a restart
    */
-  public void reload(Path configDir) {
+  public String reload(Path configDir) {
     logger.info("[Conduit] Reloading configuration...");
     ConduitConfig newConfig = ConduitConfig.load(configDir);
+    ConduitConfig oldConfig = this.config;
+
     handshakeCache.setTtlSeconds(newConfig.getHandshakeCacheTtlSeconds());
-    connectionThrottler.setMaxPerSecond(newConfig.getConnectionThrottleMaxPerSecond());
     diagnostics.reconfigure(newConfig);
     versionGate.setPolicy(newConfig.getVersionPolicy());
+
+    connectionThrottler.setEnabled(newConfig.isConnectionThrottleEnabled());
+    connectionThrottler.setPrefixes(newConfig.getConnectionThrottleIpv4Prefix(),
+        newConfig.getConnectionThrottleIpv6Prefix());
+    connectionThrottler.setLogIntervalMs(newConfig.getConnectionThrottleLogIntervalMs());
+
+    botFilter.setEnabled(newConfig.isBotFilterEnabled());
+    botFilter.setHandshakeTimeoutMs(newConfig.getBotFilterTimeoutMs());
+    botFilter.setPrefixes(newConfig.getConnectionThrottleIpv4Prefix(),
+        newConfig.getConnectionThrottleIpv6Prefix());
+
+    motdCache.setEnabled(newConfig.isMotdCacheEnabled());
+
+    tabCompleteCache.setEnabled(newConfig.isTabCompleteCacheEnabled());
+    tabCompleteCache.setTtlMs(newConfig.getTabCompleteCacheTtlMs());
+
+    channelGuard.setEnabled(newConfig.isChannelGuardEnabled());
+    channelGuard.reconfigure(newConfig.getChannelGuardBlockList(),
+        ChannelGuard.Action.parse(newConfig.getChannelGuardAction()));
+
+    healthChecker.setEnabled(newConfig.isHealthCheckEnabled());
+    healthChecker.setIntervalMs(newConfig.getHealthCheckIntervalMs());
+    healthChecker.setThresholds(newConfig.getHealthCheckFailureThreshold(),
+        newConfig.getHealthCheckSuccessThreshold());
+
+    fallbackRouter.setConfiguredFallbacks(newConfig.getFallbackServers());
+
+    commandForwarder.setEnabled(newConfig.isCommandForwardingEnabled());
+    commandForwarder.setRequirePermission(newConfig.isCommandForwardingRequirePermission());
+    commandForwarder.setLogForwardedCommands(newConfig.isCommandForwardingLog());
+    commandForwarder.setAllowedServers(newConfig.getCommandForwardingAllowedServers());
+    commandForwarder.setCommandAllowlist(newConfig.getCommandForwardingAllowlist());
+    commandForwarder.setCommandDenylist(newConfig.getCommandForwardingDenylist());
+
+    maintenanceManager.reconfigure(newConfig.getMaintenanceKickMessage(),
+        newConfig.getMaintenanceMotd(), newConfig.getMaintenanceAllowlist());
+
+    // Attack mode overrides the live limits it owns, so re-apply it last.
     if (attackModeEnabled) {
       newConfig.getAttackModePolicy().apply(connectionThrottler, botFilter, motdCache);
     } else {
@@ -325,15 +371,74 @@ public final class Conduit {
       botFilter.setThreshold(newConfig.getBotFilterThreshold());
       motdCache.setTtlMs(newConfig.getMotdCacheTtlMs());
     }
+
     config = newConfig;
-    logger.info("[Conduit] Reload complete. Note: write-buffer watermarks, health-check interval,"
-        + " MOTD TTL, graceful-shutdown, bot-filter, tab-complete cache, and channel-guard"
-        + " settings require a proxy restart.");
+    String restartNeeded = describeRestartRequiredChanges(oldConfig, newConfig);
+    if (restartNeeded.isEmpty()) {
+      logger.info("[Conduit] Reload complete; every changed setting was applied live.");
+      return "Conduit configuration reloaded; every changed setting was applied live.";
+    }
+    logger.warn("[Conduit] Reload complete, but these changes need a proxy restart: {}",
+        restartNeeded);
+    return "Conduit configuration reloaded. These changes need a proxy restart: " + restartNeeded;
   }
 
   /** Reloads using the config directory passed to {@link #init}. */
-  public void reload() {
-    reload(configDir);
+  public String reload() {
+    return reload(configDir);
+  }
+
+  /**
+   * Lists the keys that changed in this reload but could not be applied, so the operator hears
+   * about exactly their change rather than a standing list of caveats.
+   */
+  private static String describeRestartRequiredChanges(ConduitConfig before, ConduitConfig after) {
+    List<String> changed = new ArrayList<>();
+    addIfChanged(changed, "network.write-buffer-high-watermark",
+        before.getWriteBufferHighWatermark(), after.getWriteBufferHighWatermark());
+    addIfChanged(changed, "network.write-buffer-low-watermark",
+        before.getWriteBufferLowWatermark(), after.getWriteBufferLowWatermark());
+    addIfChanged(changed, "network.tab-complete-cache-max-entries",
+        before.getTabCompleteCacheMaxEntries(), after.getTabCompleteCacheMaxEntries());
+    addIfChanged(changed, "server.graceful-shutdown-enabled",
+        before.isGracefulShutdownEnabled(), after.isGracefulShutdownEnabled());
+    addIfChanged(changed, "server.graceful-shutdown-timeout-ms",
+        before.getGracefulShutdownTimeoutMs(), after.getGracefulShutdownTimeoutMs());
+    addIfChanged(changed, "server.graceful-shutdown-message",
+        before.getGracefulShutdownMessage(), after.getGracefulShutdownMessage());
+    addIfChanged(changed, "forwarding.channel",
+        before.getCommandForwardingChannel(), after.getCommandForwardingChannel());
+    addIfChanged(changed, "metrics.http-enabled",
+        before.isMetricsHttpEnabled(), after.isMetricsHttpEnabled());
+    addIfChanged(changed, "metrics.http-host", before.getMetricsHttpHost(),
+        after.getMetricsHttpHost());
+    addIfChanged(changed, "metrics.http-port", before.getMetricsHttpPort(),
+        after.getMetricsHttpPort());
+    addIfChanged(changed, "metrics.http-path", before.getMetricsHttpPath(),
+        after.getMetricsHttpPath());
+    addIfChanged(changed, "metrics.prometheus-path", before.getMetricsPrometheusPath(),
+        after.getMetricsPrometheusPath());
+    addIfChanged(changed, "metrics.auth-token", before.getMetricsAuthToken(),
+        after.getMetricsAuthToken());
+    addIfChanged(changed, "maintenance.enabled", before.isMaintenanceFeatureEnabled(),
+        after.isMaintenanceFeatureEnabled());
+    addIfChanged(changed, "commands.admin-enabled", before.isAdminCommandsEnabled(),
+        after.isAdminCommandsEnabled());
+    addIfChanged(changed, "commands.modlist-enabled", before.isModListCommandEnabled(),
+        after.isModListCommandEnabled());
+    addIfChanged(changed, "spark.bundle-enabled", before.isSparkBundleEnabled(),
+        after.isSparkBundleEnabled());
+    addIfChanged(changed, "luckperms.bundle-enabled", before.isLuckPermsBundleEnabled(),
+        after.isLuckPermsBundleEnabled());
+    addIfChanged(changed, "update.enabled", before.isUpdateCheckEnabled(),
+        after.isUpdateCheckEnabled());
+    return String.join(", ", changed);
+  }
+
+  private static void addIfChanged(List<String> out, String key, Object before, Object after) {
+    if (!Objects.equals(before, after)) {
+      out.add(key + " (" + before + " -> " + after + ")");
+    }
   }
 
   /** Returns the loaded {@link ConduitConfig}. */

@@ -1,3 +1,75 @@
+# Conduit 1.8.0
+
+## Fixed
+
+- **The tab-complete cache could show one player another player's command suggestions.** Completions
+  are filtered for whoever asked for them, but cached entries were keyed only on the server and the
+  typed text — so an administrator typing `/` filled the entry that the next player typing `/` was
+  served. Entries are now per player, and are dropped when that player disconnects. Only networks
+  that had turned on the opt-in `tab-complete-cache` were affected.
+- **The bot filter now actually counts a flood.** It tracked one pending handshake per IP address
+  rather than per connection, so a source opening connections in quick succession — the shape of
+  every real flood — kept resetting that single slot and almost nothing was counted. Handshakes are
+  tracked per connection now. Ordinary server-list pings still never count against anyone.
+- **A single missed health-check ping no longer pulls a backend out of routing.** One long GC pause
+  on a backend was enough to mark it unhealthy and then healthy again moments later. A backend now
+  goes down after 3 consecutive failed pings and comes back after 2 consecutive good ones; both are
+  configurable (`health-check-failure-threshold`, `health-check-success-threshold`).
+- **A connection flood no longer floods your log.** The connection throttle logged a line per
+  dropped connection, on the accept path. Drops are now summarised per source at most once every
+  5 seconds (`connection-throttle-log-interval-ms`).
+- **The metrics endpoint can no longer be wedged by one idle client.** A connection that opened and
+  sent nothing used to block the endpoint for everyone, scrapers included. Requests are handled on
+  a worker pool with read timeouts.
+- **The MOTD cache no longer mixes up clients.** Cached pings were keyed on the address alone,
+  ignoring the client's version and the hostname it connected to, so two players behind one
+  connection — or one player pinging two of your hostnames — could receive each other's answer.
+
+- **`fallback-servers` now does what it says.** The router was checking the wrong half of
+  Velocity's kick event: it acted only when a player's *move to another server* failed — a case
+  where they are still safely on their current server and Velocity already handles it correctly —
+  and did nothing when a player actually lost their server or when their first connection on login
+  could not be reached. Those are exactly the cases the list is configured for, and they work now.
+  Velocity's own `try` list still goes first; Conduit steps in when it is exhausted or when the
+  server it picked is one the health checker knows is down.
+
+## Added
+
+- **IPv6 floods are counted properly.** The throttle and bot filter used to count each address
+  separately, which an attacker holding a single IPv6 `/64` — 18 quintillion addresses — escaped
+  for free. Sources are now grouped by network prefix, `/64` for IPv6 and `/32` for IPv4 by
+  default, and both are configurable.
+- **Prometheus support on the metrics endpoint.** `/metrics/prometheus` serves the same counters in
+  the Prometheus text format, so you can point a scraper straight at Conduit. Set
+  `metrics.auth-token` to require a bearer token, which is what makes binding it off loopback
+  reasonable. `/conduit metrics prometheus` prints the same thing in console.
+- **Rolling restarts without kicking anyone.** `/conduit drain <server>` closes a backend to new
+  players and moves the players on it somewhere routable; `/conduit undrain <server>` reopens it. A
+  draining server still reports as healthy — it is a routing decision, not a health problem. Grant
+  your staff `conduit.drain.bypass` and they can still walk onto a draining server, and are never
+  moved off it, so you can watch the restart from inside while everyone else is kept away.
+- **Tighter control over backend → proxy command forwarding.** A forwarded console command runs
+  with your proxy console's full authority, which is a lot of trust to place in every backend on
+  the network. `allowed-servers` limits which backends may forward, and `command-allowlist` /
+  `command-denylist` limit what they may run. Defaults are unchanged (empty = as before).
+
+## Changed
+
+- **`/conduit reload` now applies far more, and tells you the truth about the rest.** Turning a
+  subsystem on or off in `conduit.toml` — the bot filter, channel guard, MOTD cache, tab-complete
+  cache, health checks, connection throttle, or command forwarding — used to require a restart, and
+  reloading appeared to succeed while quietly doing nothing. All of those now take effect on
+  reload, along with their thresholds, TTLs, block-lists, and fallback order. The reload then names
+  the specific keys you changed that genuinely need a restart, instead of printing a standing list
+  of caveats.
+
+## Build
+
+- Refreshed the bundled LuckPerms (5.5.84) and spark (1.10.185) jars after upstream rotated both
+  download URLs.
+
+---
+
 # Conduit 1.7.5
 
 ## Fixed

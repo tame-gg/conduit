@@ -19,7 +19,10 @@ package com.velocitypowered.proxy.conduit;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
+import com.electronwill.nightconfig.core.io.ParsingException;
 import com.velocitypowered.api.network.ProtocolVersion;
+import com.velocitypowered.proxy.conduit.health.BackendHealthChecker;
+import com.velocitypowered.proxy.conduit.network.ConnectionThrottler;
 import com.velocitypowered.proxy.conduit.routing.ModCompatibilityRules;
 import com.velocitypowered.proxy.conduit.security.AttackModePolicy;
 import com.velocitypowered.proxy.conduit.security.ChannelGuardPreset;
@@ -86,6 +89,8 @@ public final class ConduitConfig {
   // ── Server section ────────────────────────────────────────────────────────
   private final boolean healthCheckEnabled;
   private final int healthCheckIntervalMs;
+  private final int healthCheckFailureThreshold;
+  private final int healthCheckSuccessThreshold;
   private final List<String> fallbackServers;
   private final boolean motdCacheEnabled;
   private final int motdCacheTtlMs;
@@ -97,6 +102,9 @@ public final class ConduitConfig {
   private final int botFilterThreshold;
 
   // ── Network (continued) ───────────────────────────────────────────────────
+  private final int connectionThrottleIpv4Prefix;
+  private final int connectionThrottleIpv6Prefix;
+  private final int connectionThrottleLogIntervalMs;
   private final boolean tabCompleteCacheEnabled;
   private final int tabCompleteCacheTtlMs;
   private final int tabCompleteCacheMaxEntries;
@@ -116,6 +124,8 @@ public final class ConduitConfig {
   private final String metricsHttpHost;
   private final int metricsHttpPort;
   private final String metricsHttpPath;
+  private final String metricsPrometheusPath;
+  private final String metricsAuthToken;
 
   // ── Maintenance section ───────────────────────────────────────────────────
   private final boolean maintenanceFeatureEnabled;
@@ -136,6 +146,9 @@ public final class ConduitConfig {
   private final String commandForwardingChannel;
   private final boolean commandForwardingRequirePermission;
   private final boolean commandForwardingLog;
+  private final List<String> commandForwardingAllowedServers;
+  private final List<String> commandForwardingAllowlist;
+  private final List<String> commandForwardingDenylist;
 
   // ── Update section ────────────────────────────────────────────────────────
   private final boolean updateCheckEnabled;
@@ -185,6 +198,8 @@ public final class ConduitConfig {
 
     this.healthCheckEnabled = b.healthCheckEnabled;
     this.healthCheckIntervalMs = b.healthCheckIntervalMs;
+    this.healthCheckFailureThreshold = b.healthCheckFailureThreshold;
+    this.healthCheckSuccessThreshold = b.healthCheckSuccessThreshold;
     this.fallbackServers = b.fallbackServers;
     this.motdCacheEnabled = b.motdCacheEnabled;
     this.motdCacheTtlMs = b.motdCacheTtlMs;
@@ -195,6 +210,9 @@ public final class ConduitConfig {
     this.botFilterTimeoutMs = b.botFilterTimeoutMs;
     this.botFilterThreshold = b.botFilterThreshold;
 
+    this.connectionThrottleIpv4Prefix = b.connectionThrottleIpv4Prefix;
+    this.connectionThrottleIpv6Prefix = b.connectionThrottleIpv6Prefix;
+    this.connectionThrottleLogIntervalMs = b.connectionThrottleLogIntervalMs;
     this.tabCompleteCacheEnabled = b.tabCompleteCacheEnabled;
     this.tabCompleteCacheTtlMs = b.tabCompleteCacheTtlMs;
     this.tabCompleteCacheMaxEntries = b.tabCompleteCacheMaxEntries;
@@ -211,6 +229,8 @@ public final class ConduitConfig {
     this.metricsHttpHost = b.metricsHttpHost;
     this.metricsHttpPort = b.metricsHttpPort;
     this.metricsHttpPath = b.metricsHttpPath;
+    this.metricsPrometheusPath = b.metricsPrometheusPath;
+    this.metricsAuthToken = b.metricsAuthToken;
 
     this.maintenanceFeatureEnabled = b.maintenanceFeatureEnabled;
     this.maintenanceActiveOnStart = b.maintenanceActiveOnStart;
@@ -227,6 +247,9 @@ public final class ConduitConfig {
     this.commandForwardingChannel = b.commandForwardingChannel;
     this.commandForwardingRequirePermission = b.commandForwardingRequirePermission;
     this.commandForwardingLog = b.commandForwardingLog;
+    this.commandForwardingAllowedServers = b.commandForwardingAllowedServers;
+    this.commandForwardingAllowlist = b.commandForwardingAllowlist;
+    this.commandForwardingDenylist = b.commandForwardingDenylist;
 
     this.updateCheckEnabled = b.updateCheckEnabled;
     this.updateNotifyOnStartup = b.updateNotifyOnStartup;
@@ -285,7 +308,11 @@ public final class ConduitConfig {
     // will write back to disk, reformatting the user's file. We only want to read.
     CommentedFileConfig toml = CommentedFileConfig.of(file);
     try {
-      toml.load();
+      try {
+        toml.load();
+      } catch (ParsingException malformed) {
+        throw new IllegalArgumentException(describeParseFailure(file, malformed), malformed);
+      }
       ConduitConfig cfg = fromToml(toml);
       if (applyLiveValues) {
         cfg.applyLiveValues();
@@ -299,6 +326,27 @@ public final class ConduitConfig {
         // best-effort
       }
     }
+  }
+
+  /**
+   * Turns a TOML parser exception into something an operator can act on.
+   *
+   * <p>The underlying message names neither the file nor the line, and its wording is an artefact
+   * of how the parser backtracks — an unquoted word in a list is reported as a malformed
+   * <em>number</em>, because a bare token can only legally be one. That is the mistake operators
+   * actually make, so it gets called out by name.
+   */
+  private static String describeParseFailure(Path file, ParsingException cause) {
+    StringBuilder message = new StringBuilder()
+        .append(file.toAbsolutePath())
+        .append(" is not valid TOML: ")
+        .append(cause.getMessage());
+    if (cause.getMessage() != null && cause.getMessage().contains("in number")) {
+      message.append(". A bare word where a value is expected is the usual cause — strings must be"
+          + " quoted, in lists too (fallback-servers = [\"lobby\", \"hardcore\"], not"
+          + " [lobby, hardcore])");
+    }
+    return message.append('.').toString();
   }
 
   /** Loads {@code conduit.toml} for inspection without mutating live static values. */
@@ -332,6 +380,13 @@ public final class ConduitConfig {
       b.connectionThrottleEnabled = network.getOrElse("connection-throttle", true);
       b.connectionThrottleMaxPerSecond = network.getIntOrElse(
           "connection-throttle-max-per-second", 30);
+      b.connectionThrottleIpv4Prefix = network.getIntOrElse(
+          "connection-throttle-ipv4-prefix", ConnectionThrottler.DEFAULT_IPV4_PREFIX);
+      b.connectionThrottleIpv6Prefix = network.getIntOrElse(
+          "connection-throttle-ipv6-prefix", ConnectionThrottler.DEFAULT_IPV6_PREFIX);
+      b.connectionThrottleLogIntervalMs = network.getIntOrElse(
+          "connection-throttle-log-interval-ms",
+          (int) ConnectionThrottler.DEFAULT_LOG_INTERVAL_MS);
       b.tabCompleteCacheEnabled = network.getOrElse("tab-complete-cache", false);
       b.tabCompleteCacheTtlMs = network.getIntOrElse("tab-complete-cache-ttl-ms", 1500);
       b.tabCompleteCacheMaxEntries = network.getIntOrElse(
@@ -367,6 +422,8 @@ public final class ConduitConfig {
       b.metricsHttpHost = metrics.getOrElse("http-host", "127.0.0.1");
       b.metricsHttpPort = metrics.getIntOrElse("http-port", 9589);
       b.metricsHttpPath = metrics.getOrElse("http-path", "/metrics");
+      b.metricsPrometheusPath = metrics.getOrElse("prometheus-path", "/metrics/prometheus");
+      b.metricsAuthToken = metrics.getOrElse("auth-token", "");
     }
 
     CommentedConfig maintenance = toml.get("maintenance");
@@ -408,6 +465,12 @@ public final class ConduitConfig {
           "velocity_command_forward:main");
       b.commandForwardingRequirePermission = forwarding.getOrElse("require-permission", false);
       b.commandForwardingLog = forwarding.getOrElse("log-forwarded-commands", true);
+      b.commandForwardingAllowedServers =
+          forwarding.getOrElse("allowed-servers", Collections.emptyList());
+      b.commandForwardingAllowlist =
+          forwarding.getOrElse("command-allowlist", Collections.emptyList());
+      b.commandForwardingDenylist =
+          forwarding.getOrElse("command-denylist", Collections.emptyList());
     }
 
     CommentedConfig update = toml.get("update");
@@ -454,6 +517,10 @@ public final class ConduitConfig {
     if (server != null) {
       b.healthCheckEnabled = server.getOrElse("health-check-enabled", true);
       b.healthCheckIntervalMs = server.getIntOrElse("health-check-interval-ms", 10000);
+      b.healthCheckFailureThreshold = server.getIntOrElse("health-check-failure-threshold",
+          BackendHealthChecker.DEFAULT_FAILURE_THRESHOLD);
+      b.healthCheckSuccessThreshold = server.getIntOrElse("health-check-success-threshold",
+          BackendHealthChecker.DEFAULT_SUCCESS_THRESHOLD);
       b.fallbackServers = server.getOrElse("fallback-servers", Collections.emptyList());
       b.motdCacheEnabled = server.getOrElse("motd-cache-enabled", true);
       b.motdCacheTtlMs = server.getIntOrElse("motd-cache-ttl-ms", 2000);
@@ -522,6 +589,11 @@ public final class ConduitConfig {
           + b.seamlessSwitchSettleMs + ") must be <= 5000");
     }
     requirePositive("health-check-interval-ms", b.healthCheckIntervalMs);
+    requirePositive("health-check-failure-threshold", b.healthCheckFailureThreshold);
+    requirePositive("health-check-success-threshold", b.healthCheckSuccessThreshold);
+    requirePrefix("connection-throttle-ipv4-prefix", b.connectionThrottleIpv4Prefix, 32);
+    requirePrefix("connection-throttle-ipv6-prefix", b.connectionThrottleIpv6Prefix, 128);
+    requireNonNegative("connection-throttle-log-interval-ms", b.connectionThrottleLogIntervalMs);
     requirePositive("motd-cache-ttl-ms", b.motdCacheTtlMs);
     requirePositive("graceful-shutdown-timeout-ms", b.gracefulShutdownTimeoutMs);
     requirePositive("bot-filter-timeout-ms", b.botFilterTimeoutMs);
@@ -535,6 +607,14 @@ public final class ConduitConfig {
     requirePositive("metrics.http-port", b.metricsHttpPort);
     if (b.metricsHttpPath == null || !b.metricsHttpPath.startsWith("/")) {
       throw new IllegalArgumentException("conduit.toml: metrics.http-path must start with '/'");
+    }
+    if (b.metricsPrometheusPath == null || !b.metricsPrometheusPath.startsWith("/")) {
+      throw new IllegalArgumentException(
+          "conduit.toml: metrics.prometheus-path must start with '/'");
+    }
+    if (b.metricsPrometheusPath.equals(b.metricsHttpPath)) {
+      throw new IllegalArgumentException("conduit.toml: metrics.prometheus-path must differ from"
+          + " metrics.http-path (both are '" + b.metricsHttpPath + "')");
     }
     if (b.commandForwardingEnabled) {
       String channel = b.commandForwardingChannel;
@@ -570,6 +650,14 @@ public final class ConduitConfig {
   private static void requireNonNegative(String key, int value) {
     if (value < 0) {
       throw new IllegalArgumentException("conduit.toml: " + key + " must be >= 0, got " + value);
+    }
+  }
+
+  /** Requires a CIDR prefix length within the address family's range. */
+  private static void requirePrefix(String key, int value, int max) {
+    if (value < 1 || value > max) {
+      throw new IllegalArgumentException(
+          "conduit.toml: " + key + " must be between 1 and " + max + ", got " + value);
     }
   }
 
@@ -712,6 +800,16 @@ public final class ConduitConfig {
     return healthCheckIntervalMs;
   }
 
+  /** Returns consecutive failed pings before a backend is marked unhealthy. */
+  public int getHealthCheckFailureThreshold() {
+    return healthCheckFailureThreshold;
+  }
+
+  /** Returns consecutive successful pings before an unhealthy backend is marked healthy again. */
+  public int getHealthCheckSuccessThreshold() {
+    return healthCheckSuccessThreshold;
+  }
+
   /** Returns the ordered list of preferred fallback server names. */
   public List<String> getFallbackServers() {
     return fallbackServers;
@@ -755,6 +853,23 @@ public final class ConduitConfig {
   /** Returns the incomplete-handshake count threshold above which an IP is blocked. */
   public int getBotFilterThreshold() {
     return botFilterThreshold;
+  }
+
+  // ── Connection-throttle grouping getters ──────────────────────────────────
+
+  /** Returns the IPv4 prefix length used to group sources for throttling and bot filtering. */
+  public int getConnectionThrottleIpv4Prefix() {
+    return connectionThrottleIpv4Prefix;
+  }
+
+  /** Returns the IPv6 prefix length used to group sources for throttling and bot filtering. */
+  public int getConnectionThrottleIpv6Prefix() {
+    return connectionThrottleIpv6Prefix;
+  }
+
+  /** Returns the minimum gap between aggregated connection-throttle drop reports, in ms. */
+  public int getConnectionThrottleLogIntervalMs() {
+    return connectionThrottleLogIntervalMs;
   }
 
   // ── Tab-complete cache getters ────────────────────────────────────────────
@@ -830,6 +945,16 @@ public final class ConduitConfig {
     return metricsHttpPath;
   }
 
+  /** Returns the path serving the Prometheus text exposition. */
+  public String getMetricsPrometheusPath() {
+    return metricsPrometheusPath;
+  }
+
+  /** Returns the bearer token required by the metrics endpoint, or {@code ""} when open. */
+  public String getMetricsAuthToken() {
+    return metricsAuthToken;
+  }
+
   // ── Versions getters ──────────────────────────────────────────────────────
 
   /**
@@ -903,6 +1028,21 @@ public final class ConduitConfig {
   /** Returns whether backend-supplied log lines for forwarded commands are echoed to the console. */
   public boolean isCommandForwardingLog() {
     return commandForwardingLog;
+  }
+
+  /** Returns the backends permitted to forward commands; empty means every backend. */
+  public List<String> getCommandForwardingAllowedServers() {
+    return commandForwardingAllowedServers;
+  }
+
+  /** Returns the root command words a backend may forward; empty means every command. */
+  public List<String> getCommandForwardingAllowlist() {
+    return commandForwardingAllowlist;
+  }
+
+  /** Returns the root command words that are always refused when forwarded. */
+  public List<String> getCommandForwardingDenylist() {
+    return commandForwardingDenylist;
   }
 
   // ── Update getters ────────────────────────────────────────────────────────
@@ -1026,6 +1166,9 @@ public final class ConduitConfig {
     int packetQueueMaxDepth = 256;
     boolean connectionThrottleEnabled = true;
     int connectionThrottleMaxPerSecond = 30;
+    int connectionThrottleIpv4Prefix = ConnectionThrottler.DEFAULT_IPV4_PREFIX;
+    int connectionThrottleIpv6Prefix = ConnectionThrottler.DEFAULT_IPV6_PREFIX;
+    int connectionThrottleLogIntervalMs = (int) ConnectionThrottler.DEFAULT_LOG_INTERVAL_MS;
 
     boolean diagnosticsEnabled = false;
     boolean traceModHandshakes = false;
@@ -1033,6 +1176,8 @@ public final class ConduitConfig {
 
     boolean healthCheckEnabled = true;
     int healthCheckIntervalMs = 10000;
+    int healthCheckFailureThreshold = BackendHealthChecker.DEFAULT_FAILURE_THRESHOLD;
+    int healthCheckSuccessThreshold = BackendHealthChecker.DEFAULT_SUCCESS_THRESHOLD;
     List<String> fallbackServers = Collections.emptyList();
     boolean motdCacheEnabled = true;
     int motdCacheTtlMs = 2000;
@@ -1059,6 +1204,8 @@ public final class ConduitConfig {
     String metricsHttpHost = "127.0.0.1";
     int metricsHttpPort = 9589;
     String metricsHttpPath = "/metrics";
+    String metricsPrometheusPath = "/metrics/prometheus";
+    String metricsAuthToken = "";
 
     boolean maintenanceFeatureEnabled = true;
     boolean maintenanceActiveOnStart = false;
@@ -1077,6 +1224,9 @@ public final class ConduitConfig {
     String commandForwardingChannel = "velocity_command_forward:main";
     boolean commandForwardingRequirePermission = false;
     boolean commandForwardingLog = true;
+    List<String> commandForwardingAllowedServers = Collections.emptyList();
+    List<String> commandForwardingAllowlist = Collections.emptyList();
+    List<String> commandForwardingDenylist = Collections.emptyList();
 
     boolean updateCheckEnabled = true;
     boolean updateNotifyOnStartup = true;

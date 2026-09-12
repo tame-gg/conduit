@@ -45,4 +45,21 @@ class ConduitMetricsSnapshotTest {
     assertTrue(json.contains("\"handshakeCacheHits\":1"));
     assertTrue(json.contains("\"channelsBlocked\":1"));
   }
+
+  @Test
+  void rendersDiagnosticsInPrometheusExpositionFormat() throws Exception {
+    Files.writeString(tempDir.resolve("conduit.toml"), "[diagnostics]\nenabled = true\n");
+    ConduitDiagnostics diagnostics = new ConduitDiagnostics(ConduitConfig.load(tempDir));
+
+    diagnostics.recordConnection("notazandi");
+    diagnostics.recordChannelBlocked("notazandi", "wdl:init", "DROP");
+
+    String text = ConduitMetricsSnapshot.from(diagnostics).toPrometheus();
+
+    assertTrue(text.contains("# HELP conduit_connections_total"), text);
+    assertTrue(text.contains("# TYPE conduit_connections_total counter"), text);
+    assertTrue(text.contains("\nconduit_connections_total 1\n"), text);
+    assertTrue(text.contains("\nconduit_channels_blocked_total 1\n"), text);
+    assertTrue(text.endsWith("\n"), "exposition format requires a trailing newline");
+  }
 }

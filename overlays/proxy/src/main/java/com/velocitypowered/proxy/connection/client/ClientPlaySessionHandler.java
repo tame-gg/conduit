@@ -598,6 +598,8 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   @Override
   public void disconnected() {
+    // Conduit: tab-complete entries are per player, so they die with the player.
+    Conduit.get().getTabCompleteCache().invalidatePlayer(player.getUniqueId());
     player.teardown();
   }
 
@@ -1312,12 +1314,13 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
 
   private boolean serveCachedTabCompleteResponse(TabCompleteRequestPacket request) {
     TabCompleteCache cache = Conduit.get().getTabCompleteCache();
-    if (cache == TabCompleteCache.DISABLED || player.getCurrentServer().isEmpty()) {
+    if (!cache.isEnabled() || player.getCurrentServer().isEmpty()) {
       return false;
     }
 
     String serverName = player.getCurrentServer().get().getServerInfo().getName();
-    var cached = cache.lookup(serverName, request.getCommand());
+    // Keyed per player: suggestions are permission-filtered for whoever asked for them.
+    var cached = cache.lookup(player.getUniqueId(), serverName, request.getCommand());
     if (cached.isEmpty()) {
       return false;
     }
@@ -1337,7 +1340,7 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
   private void storeTabCompleteResponse(TabCompleteRequestPacket request,
                                         TabCompleteResponsePacket response) {
     TabCompleteCache cache = Conduit.get().getTabCompleteCache();
-    if (cache == TabCompleteCache.DISABLED || player.getCurrentServer().isEmpty()) {
+    if (!cache.isEnabled() || player.getCurrentServer().isEmpty()) {
       return;
     }
 
@@ -1346,11 +1349,12 @@ public class ClientPlaySessionHandler implements MinecraftSessionHandler {
       suggestions.add(offer.getText());
     }
     String serverName = player.getCurrentServer().get().getServerInfo().getName();
-    cache.store(serverName, request.getCommand(), new TabCompleteCache.CachedResponse(
-        suggestions,
-        response.getTransactionId(),
-        response.getStart(),
-        response.getLength()));
+    cache.store(player.getUniqueId(), serverName, request.getCommand(),
+        new TabCompleteCache.CachedResponse(
+            suggestions,
+            response.getTransactionId(),
+            response.getStart(),
+            response.getLength()));
   }
 
   /**

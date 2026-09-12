@@ -85,6 +85,8 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(LegacyPingPacket packet) {
+    // Conduit: this connection spoke Minecraft, so it is not an incomplete handshake.
+    Conduit.get().getBotFilter().completeHandshake(connection.getChannel());
     connection.setProtocolVersion(ProtocolVersion.LEGACY);
     StatusSessionHandler handler = new StatusSessionHandler(server, new LegacyInboundConnection(connection, packet));
     connection.setActiveSessionHandler(StateRegistry.STATUS, handler);
@@ -104,6 +106,9 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
 
   @Override
   public boolean handle(HandshakePacket handshake) {
+    // Conduit: a handshake — for status or for login — settles the bot-filter attempt opened for
+    // this channel. Only channels that never speak at all are counted as incomplete.
+    Conduit.get().getBotFilter().completeHandshake(connection.getChannel());
     StateRegistry nextState = getStateForProtocol(handshake.getNextStatus());
     if (nextState == null) {
       LOGGER.error("{} provided invalid protocol {}", this, handshake.getNextStatus());
@@ -166,7 +171,6 @@ public class HandshakeSessionHandler implements MinecraftSessionHandler {
     }
 
     InetAddress address = ((InetSocketAddress) connection.getRemoteAddress()).getAddress();
-    Conduit.get().getBotFilter().recordHandshakeComplete(address);
 
     if (!server.getIpAttemptLimiter().attempt(address)) {
       // Bump connection into the correct protocol state so that we can send the disconnect packet.

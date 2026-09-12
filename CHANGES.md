@@ -4,6 +4,140 @@ All changes relative to upstream `GemstoneGG/Velocity-CTD @ libdeflate`.
 
 ---
 
+## 1.8.0 — Correctness pass on flood mitigation, caching, health, and reload
+
+### Fixed — tab-complete cache served one player's suggestions to another
+
+* `TabCompleteCache` keyed entries on `(server, prefix)` only. Backends filter Brigadier
+  suggestions by what the requesting player may run, and `TabCompleteEvent` listeners tailor them
+  further, so an administrator typing `/` populated an entry that any player typing `/` within the
+  TTL was then served — their command list, and their argument completions with it. The key now
+  includes the player's UUID, entries are dropped when that player disconnects, and the shipped
+  config comment says why. The feature is opt-in (`tab-complete-cache = false`), so only operators
+  who turned it on were exposed.
+
+### Fixed — the bot filter barely counted anything during an actual flood
+
+* `BotFilter` kept one pending-handshake timestamp **per address**, but connections are per
+  channel. A source opening connections back to back overwrote that slot on every accept, so when
+  a timer fired it measured the newest connection's age, decided it was too young, and counted
+  nothing — the harder the flood, the less it counted. One legitimate login also cleared the
+  pending state of every other in-flight connection from the same address.
+* Handshakes are now tracked per connection (`BotFilter.Attempt`, held in a channel attribute), so
+  concurrent connections are counted independently and an attempt can only be counted once.
+* The timeout task no longer requires the channel to still be open, which previously excused every
+  bot that opened a channel and hung up before the timer; instead, an attempt is settled as soon as
+  the connection speaks Minecraft at all — a handshake packet or a legacy ping. That is what keeps
+  ordinary server-list pings, which never send Login Start, from being counted as incomplete.
+
+### Fixed — one missed ping pulled a backend out of routing
+
+* `BackendHealthChecker` marked a server unhealthy on the first failed ping, while tracking a
+  `consecutiveFailures` count it never consulted. A GC pause longer than the per-ping timeout was
+  enough to flap a backend out of fallback routing and back. Hysteresis is now applied on both
+  edges: `health-check-failure-threshold` (default 3) consecutive failures to go down, and
+  `health-check-success-threshold` (default 2) consecutive successes to come back. Set the failure
+  threshold to 1 for the old behaviour.
+
+### Fixed — the connection throttle logged one line per dropped connection
+
+* A `logger.warn` per drop, on the Netty accept path, turned mitigation into synchronous log I/O at
+  exactly the moment the proxy is under load. Drops are now aggregated per source and reported at
+  most once per `connection-throttle-log-interval-ms` (default 5 s), with the suppressed count.
+
+### Fixed — an idle client could wedge the metrics endpoint
+
+* `ConduitMetricsServer` accepted and handled requests on one thread with no socket timeout, so a
+  single connection that opened and sent nothing blocked `readLine()` forever and the endpoint
+  stopped answering anyone — including the scraper. Requests now run on a small worker pool, every
+  socket carries a 5 s read timeout, and request lines and header counts are bounded.
+
+### Fixed — the MOTD cache could hand a client the answer built for someone else
+
+* Entries were keyed on the remote address alone, ignoring the client's protocol version and the
+  hostname it connected to — both of which routinely change the correct response (version-specific
+  labels, per-forced-host MOTDs). Two clients behind one NAT, or one client pinging two of your
+  hostnames, could swap answers. The key now covers all three, and invalidating an address drops
+  every entry it holds.
+
+### Fixed — fallback routing never fired for the case it exists for
+
+* `FallbackRouter` bailed out unless `KickedFromServerEvent.kickedDuringServerConnect()` was
+  `true` — which is the case where the player is still sitting safely on their current server and
+  a move elsewhere failed. Velocity's answer there is to keep them put and tell them, which is
+  already right; Conduit was overriding it and dragging a settled player away. Meanwhile the case
+  operators actually configure `fallback-servers` for — the backend kicked them, died under them,
+  or was unreachable for their initial login, all of which report `kickedDuringServerConnect()` as
+  `false` — returned immediately and did nothing.
+* The condition is inverted to match the feature's description. The router now leaves a player who
+  still holds a server alone, and for a player who has lost theirs it supplies a target whenever
+  Velocity is about to disconnect them, or when the server Velocity's own `try` deque picked is one
+  the health checker knows is unhealthy or draining. A redirect Velocity chose to a routable server
+  is left alone.
+* Redirects are budgeted at 3 per player per 15 seconds. Two backends that are both refusing
+  connections could otherwise bounce a player between them indefinitely; past the budget the real
+  disconnect reason is allowed through.
+
+### Added — IPv6-aware source grouping for the throttle and bot filter
+
+* Both subsystems keyed on a full address, which is correct for IPv4 and useless for IPv6: a single
+  `/64` holds 2^64 addresses, so rotating the host bits gave an attacker a fresh counter per
+  connection and thrashed the bounded tracking tables at the same time. Sources are now grouped by
+  `connection-throttle-ipv4-prefix` (default 32) and `connection-throttle-ipv6-prefix` (default 64).
+  `/conduit unblock <ip>` clears the block on the source network covering that address.
+
+### Added — Prometheus exposition and authentication on the metrics endpoint
+
+* `metrics.prometheus-path` (default `/metrics/prometheus`) serves the same counters in the
+  Prometheus text format, so the endpoint can be scraped without a bespoke exporter;
+  `/conduit metrics prometheus` prints the same thing. `metrics.auth-token`, when set, requires
+  `Authorization: Bearer <token>` on every request, which makes binding off loopback a deliberate
+  choice rather than an open door.
+
+### Added — backend draining
+
+* `/conduit drain <server>` marks a backend closed to new players and moves the players already on
+  it to a routable server; `/conduit undrain <server>` reopens it. Drained servers stay *healthy* —
+  draining is a routing decision, not a health state — and `FallbackRouter` now asks
+  `isRoutable(...)` (healthy **and** not draining) when it picks a target, including for players
+  whose `ServerPreConnectEvent` targets a draining backend.
+* Staff holding `conduit.drain.bypass` are exempt from both halves of draining: they may still
+  connect to a draining backend, and the evacuation leaves them where they are. Draining exists so
+  a backend can be restarted without disrupting players, and whoever is performing the restart is
+  precisely the person who needs to be on it. The node is published to LuckPerms' suggestion tree
+  like the other `conduit.*` nodes.
+
+### Added — gates on backend → proxy command forwarding
+
+* A console-context forwarded command runs with the proxy console's full authority, and "it came
+  from a backend" is only as strong as the least-trusted backend on the network. `allowed-servers`
+  restricts which backends may forward at all; `command-allowlist` / `command-denylist` restrict
+  what they may run, matched on the root command word. All three default to empty, i.e. unchanged
+  behaviour.
+* The backend-supplied log line is flattened to a single line and length-capped before it is
+  printed, so a backend cannot forge log entries that look like they came from the proxy.
+
+### Changed — `/conduit reload` applies what it can and names what it cannot
+
+* Disabled subsystems used to be do-nothing sentinel singletons chosen at boot, so enabling
+  `bot-filter-enabled`, `channel-guard`, `motd-cache-enabled`, `tab-complete-cache`,
+  `health-check-enabled`, `connection-throttle`, or `command-forwarding` and reloading did nothing,
+  silently. Those seven subsystems now carry an `enabled` flag and are reconfigurable at runtime,
+  and reload pushes the new values into all of them — thresholds, TTLs, prefixes, block-lists,
+  fallback order, maintenance messages, and the check interval included.
+* Reload no longer prints a fixed list of restart-required caveats (which was also wrong: it
+  claimed the bot filter needed a restart while applying its threshold). It compares the two
+  configs and reports the keys *you* changed that could not be applied — bound sockets, the
+  shutdown hook, listener watermarks, bundled-plugin installers — and says nothing when there are
+  none.
+
+### Build
+
+* Refreshed the pinned bundled plugins after upstream rotated both URLs: LuckPerms 5.5.71 → 5.5.84,
+  spark 1.10.172 → 1.10.185.
+
+---
+
 ## 1.7.5 — Seamless switch attribute isolation
 
 ### Fixed — creative mode reach followed the player into a survival server

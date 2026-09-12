@@ -26,6 +26,10 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -63,10 +67,19 @@ import org.apache.logging.log4j.Logger;
  * Because a forwarded command executes with the authority of the console or a player, only
  * messages that genuinely originate from a backend server ({@link ServerConnection}) are honoured.
  * When {@code require-permission} is enabled, player-context commands additionally require the
- * player to hold {@link #EXECUTE_PERMISSION}; console-context commands are always allowed because
- * they can only be produced by a trusted backend console.
+ * player to hold {@link #EXECUTE_PERMISSION}.
  *
- * <p>The singleton {@link #DISABLED} instance registers no listener and forwards nothing.
+ * <p>A console-context command carries the proxy console's full authority, and "it came from a
+ * backend" is only as strong as the weakest backend on the network — a community-run minigame box
+ * is not the same trust level as your own lobby. Two further gates narrow that:
+ * <ul>
+ *   <li>{@code allowed-servers} — when non-empty, only those backends may forward anything at
+ *       all;</li>
+ *   <li>{@code command-allowlist} / {@code command-denylist} — matched against the root command
+ *       word, so a backend can be limited to the handful of proxy commands it actually needs.</li>
+ * </ul>
+ *
+ * <p>Forwarding can be switched off — and back on — at runtime via {@link #setEnabled(boolean)}.
  */
 public class CommandForwarder {
 
@@ -81,33 +94,24 @@ public class CommandForwarder {
   /** Filter flag: the backend marked this command as silent (no log / feedback). */
   private static final int FLAG_FILTERED = 0x01;
 
-  /**
-   * Sentinel instance used when command forwarding is disabled. Registers nothing and ignores
-   * every plugin message.
-   */
-  public static final CommandForwarder DISABLED =
-      new CommandForwarder("velocity_command_forward:main", false, true) {
-        @Override
-        public void register(Object plugin, ProxyServer proxy) {
-          // no-op
-        }
-
-        @Override
-        public void onPluginMessage(PluginMessageEvent event) {
-          // no-op
-        }
-      };
+  /** Upper bound on a backend-supplied log line echoed to the console. */
+  private static final int MAX_LOG_LINE_LENGTH = 512;
 
   private static final Logger logger = LogManager.getLogger(CommandForwarder.class);
 
   private final String channelName;
   private final ChannelIdentifier channel;
-  private final boolean requirePermission;
-  private final boolean logForwardedCommands;
+  private volatile boolean enabled;
+  private volatile boolean requirePermission;
+  private volatile boolean logForwardedCommands;
+  private volatile Set<String> allowedServers;
+  private volatile Set<String> commandAllowlist;
+  private volatile Set<String> commandDenylist;
   private volatile ProxyServer proxy;
+  private volatile boolean channelRegistered;
 
   /**
-   * Constructs a {@code CommandForwarder}.
+   * Constructs an enabled {@code CommandForwarder} with no server or command restrictions.
    *
    * @param channelName          the plugin-messaging channel the backend sends on
    *                             ({@code namespace:path}); must match the backend plugin
@@ -116,10 +120,46 @@ public class CommandForwarder {
    */
   public CommandForwarder(String channelName, boolean requirePermission,
       boolean logForwardedCommands) {
+    this(channelName, requirePermission, logForwardedCommands, List.of(), List.of(), List.of(),
+        true);
+  }
+
+  /**
+   * Constructs a {@code CommandForwarder}.
+   *
+   * @param channelName          the plugin-messaging channel the backend sends on
+   * @param requirePermission    whether player-context commands require {@link #EXECUTE_PERMISSION}
+   * @param logForwardedCommands whether the backend-supplied log line is echoed to the console
+   * @param allowedServers       backends permitted to forward; empty means every backend
+   * @param commandAllowlist     root command words permitted; empty means every command
+   * @param commandDenylist      root command words always refused; takes precedence over the
+   *                             allow-list
+   * @param enabled              whether forwarding is active
+   */
+  public CommandForwarder(String channelName, boolean requirePermission,
+      boolean logForwardedCommands, List<String> allowedServers, List<String> commandAllowlist,
+      List<String> commandDenylist, boolean enabled) {
     this.channelName = channelName;
     this.channel = parseChannel(channelName);
     this.requirePermission = requirePermission;
     this.logForwardedCommands = logForwardedCommands;
+    this.allowedServers = lowerCaseSet(allowedServers);
+    this.commandAllowlist = lowerCaseSet(commandAllowlist);
+    this.commandDenylist = lowerCaseSet(commandDenylist);
+    this.enabled = enabled;
+  }
+
+  private static Set<String> lowerCaseSet(List<String> values) {
+    if (values == null || values.isEmpty()) {
+      return Set.of();
+    }
+    Set<String> out = new HashSet<>(values.size());
+    for (String value : values) {
+      if (value != null && !value.isBlank()) {
+        out.add(value.trim().toLowerCase(Locale.ROOT));
+      }
+    }
+    return Set.copyOf(out);
   }
 
   private static ChannelIdentifier parseChannel(String id) {
@@ -131,13 +171,85 @@ public class CommandForwarder {
     return MinecraftChannelIdentifier.create(id.substring(0, colon), id.substring(colon + 1));
   }
 
-  /** Registers the forwarding channel and this listener on the given proxy. */
+  /**
+   * Registers this listener on the given proxy, and the forwarding channel itself when forwarding
+   * is enabled.
+   *
+   * <p>The listener is always registered so {@code /conduit reload} can switch forwarding on
+   * without a restart; the channel registration follows the enabled flag, because registering a
+   * plugin channel advertises it to clients and backends.
+   */
   public void register(Object plugin, ProxyServer proxy) {
     this.proxy = proxy;
-    proxy.getChannelRegistrar().register(channel);
     proxy.getEventManager().register(plugin, this);
-    logger.info("[Conduit] Command forwarding enabled on channel '{}' (require-permission={}).",
-        channelName, requirePermission);
+    if (enabled) {
+      registerChannel();
+      logger.info("[Conduit] Command forwarding enabled on channel '{}' (require-permission={},"
+          + " {} allowed servers, {} allow-listed commands, {} deny-listed).",
+          channelName, requirePermission, allowedServers.size(), commandAllowlist.size(),
+          commandDenylist.size());
+    }
+  }
+
+  private void registerChannel() {
+    ProxyServer server = this.proxy;
+    if (server != null && !channelRegistered) {
+      server.getChannelRegistrar().register(channel);
+      channelRegistered = true;
+    }
+  }
+
+  /** Returns whether command forwarding is currently active. */
+  public boolean isEnabled() {
+    return enabled;
+  }
+
+  /** Turns command forwarding on or off at runtime. */
+  public void setEnabled(boolean enabled) {
+    this.enabled = enabled;
+    if (enabled) {
+      registerChannel();
+    }
+  }
+
+  /** Replaces the permission requirement for player-context forwarded commands. */
+  public void setRequirePermission(boolean requirePermission) {
+    this.requirePermission = requirePermission;
+  }
+
+  /** Replaces whether backend-supplied log lines are echoed to the console. */
+  public void setLogForwardedCommands(boolean logForwardedCommands) {
+    this.logForwardedCommands = logForwardedCommands;
+  }
+
+  /** Replaces the set of backends permitted to forward commands; empty means every backend. */
+  public void setAllowedServers(List<String> allowedServers) {
+    this.allowedServers = lowerCaseSet(allowedServers);
+  }
+
+  /** Replaces the permitted root command words; empty means every command. */
+  public void setCommandAllowlist(List<String> commandAllowlist) {
+    this.commandAllowlist = lowerCaseSet(commandAllowlist);
+  }
+
+  /** Replaces the always-refused root command words. */
+  public void setCommandDenylist(List<String> commandDenylist) {
+    this.commandDenylist = lowerCaseSet(commandDenylist);
+  }
+
+  /** Returns the backends permitted to forward commands; empty means every backend. */
+  public Set<String> getAllowedServers() {
+    return allowedServers;
+  }
+
+  /** Returns the permitted root command words; empty means every command. */
+  public Set<String> getCommandAllowlist() {
+    return commandAllowlist;
+  }
+
+  /** Returns the always-refused root command words. */
+  public Set<String> getCommandDenylist() {
+    return commandDenylist;
   }
 
   /**
@@ -147,7 +259,7 @@ public class CommandForwarder {
    */
   @Subscribe(order = PostOrder.EARLY)
   public void onPluginMessage(PluginMessageEvent event) {
-    if (!channel.equals(event.getIdentifier())) {
+    if (!enabled || !channel.equals(event.getIdentifier())) {
       return;
     }
     // The command is executed here; never relay the raw payload to another backend.
@@ -159,6 +271,14 @@ public class CommandForwarder {
     }
     ProxyServer proxy = this.proxy;
     if (proxy == null) {
+      return;
+    }
+
+    String sourceServer = source.getServerInfo().getName();
+    Set<String> allowed = allowedServers;
+    if (!allowed.isEmpty() && !allowed.contains(sourceServer.toLowerCase(Locale.ROOT))) {
+      logger.warn("[Conduit] Refused a forwarded command from backend '{}' — it is not in"
+          + " [forwarding] allowed-servers.", sourceServer);
       return;
     }
 
@@ -181,6 +301,9 @@ public class CommandForwarder {
     if (command.isBlank()) {
       return;
     }
+    if (!isCommandPermitted(command, sourceServer)) {
+      return;
+    }
     boolean filtered = (flags & FLAG_FILTERED) != 0;
 
     if (uuidRaw.isEmpty()) {
@@ -189,6 +312,41 @@ public class CommandForwarder {
     } else {
       executeAsPlayer(proxy, uuidRaw, command, filtered, log);
     }
+  }
+
+  /**
+   * Applies the command allow/deny lists to the root word of {@code command}.
+   *
+   * <p>Matching the root word only is deliberate: it is the part that decides which command runs,
+   * and matching deeper would invite bypasses through argument shuffling rather than prevent them.
+   */
+  private boolean isCommandPermitted(String command, String sourceServer) {
+    String root = rootWord(command);
+    if (commandDenylist.contains(root)) {
+      logger.warn("[Conduit] Refused forwarded command '/{}' from backend '{}' —"
+          + " it is deny-listed in [forwarding] command-denylist.", root, sourceServer);
+      return false;
+    }
+    Set<String> allowlist = commandAllowlist;
+    if (!allowlist.isEmpty() && !allowlist.contains(root)) {
+      logger.warn("[Conduit] Refused forwarded command '/{}' from backend '{}' —"
+          + " it is not in [forwarding] command-allowlist.", root, sourceServer);
+      return false;
+    }
+    return true;
+  }
+
+  /** Returns the lower-cased first word of a command line, without any leading slash. */
+  private static String rootWord(String command) {
+    String trimmed = command.strip();
+    if (trimmed.startsWith("/")) {
+      trimmed = trimmed.substring(1);
+    }
+    int space = trimmed.indexOf(' ');
+    if (space >= 0) {
+      trimmed = trimmed.substring(0, space);
+    }
+    return trimmed.toLowerCase(Locale.ROOT);
   }
 
   private void executeAsPlayer(ProxyServer proxy, String uuidRaw, String command,
@@ -221,8 +379,22 @@ public class CommandForwarder {
 
   private void maybeLog(boolean filtered, String log) {
     if (!filtered && logForwardedCommands && log != null && !log.isEmpty()) {
-      logger.info(log);
+      logger.info("[Conduit] Forwarded command: {}", sanitiseLogLine(log));
     }
+  }
+
+  /**
+   * Flattens a backend-supplied log line to something safe to print.
+   *
+   * <p>The text comes off the wire, so it is not allowed to span lines — otherwise a backend could
+   * forge entries that look like they came from the proxy itself — and it is length-capped so a
+   * large payload cannot be used to flood the log.
+   */
+  private static String sanitiseLogLine(String log) {
+    String flattened = log.replace('\r', ' ').replace('\n', ' ');
+    return flattened.length() <= MAX_LOG_LINE_LENGTH
+        ? flattened
+        : flattened.substring(0, MAX_LOG_LINE_LENGTH) + "…";
   }
 
   /** Returns the channel id this forwarder listens on. */

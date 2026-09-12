@@ -38,6 +38,9 @@ import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.ChannelMessageSource;
 import com.velocitypowered.api.proxy.messages.ChannelRegistrar;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+import com.velocitypowered.api.proxy.server.ServerInfo;
+import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -62,6 +65,14 @@ class CommandForwarderTest {
     when(event.getSource()).thenReturn(source);
     when(event.getData()).thenReturn(data);
     return event;
+  }
+
+  /** A backend connection that reports the given server name. */
+  private static ServerConnection backend(String name) {
+    ServerConnection source = mock(ServerConnection.class);
+    when(source.getServerInfo())
+        .thenReturn(new ServerInfo(name, new InetSocketAddress("127.0.0.1", 25566)));
+    return source;
   }
 
   private ProxyServer proxyWith(CommandManager commands) {
@@ -91,7 +102,7 @@ class CommandForwarderTest {
     forwarder.register(new Object(), proxy);
 
     ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
-    ServerConnection source = mock(ServerConnection.class);
+    ServerConnection source = backend("lobby");
     forwarder.onPluginMessage(event(id, source, payload("", "alert hi", false, "log line")));
 
     verify(commands).executeAsync(console, "alert hi");
@@ -109,7 +120,7 @@ class CommandForwarderTest {
     forwarder.register(new Object(), proxy);
 
     ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
-    ServerConnection source = mock(ServerConnection.class);
+    ServerConnection source = backend("lobby");
     forwarder.onPluginMessage(
         event(id, source, payload(uuid.toString(), "spawn", false, "log")));
 
@@ -124,7 +135,7 @@ class CommandForwarderTest {
     forwarder.register(new Object(), proxy);
 
     ChannelIdentifier other = MinecraftChannelIdentifier.create("some", "channel");
-    ServerConnection source = mock(ServerConnection.class);
+    ServerConnection source = backend("lobby");
     forwarder.onPluginMessage(event(other, source, payload("", "op me", false, "")));
 
     verify(commands, never()).executeAsync(any(), any());
@@ -160,7 +171,7 @@ class CommandForwarderTest {
     forwarder.register(new Object(), proxy);
 
     ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
-    ServerConnection source = mock(ServerConnection.class);
+    ServerConnection source = backend("lobby");
     forwarder.onPluginMessage(
         event(id, source, payload(uuid.toString(), "sparkv", false, "log")));
 
@@ -180,10 +191,76 @@ class CommandForwarderTest {
     forwarder.register(new Object(), proxy);
 
     ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
-    ServerConnection source = mock(ServerConnection.class);
+    ServerConnection source = backend("lobby");
     forwarder.onPluginMessage(
         event(id, source, payload(uuid.toString(), "stop", false, "log")));
 
     verify(commands).executeAsync(player, "stop");
+  }
+
+  @Test
+  void refusesForwardingFromServersOutsideTheAllowList() {
+    CommandManager commands = mock(CommandManager.class);
+    ProxyServer proxy = proxyWith(commands);
+    ConsoleCommandSource console = mock(ConsoleCommandSource.class);
+    when(proxy.getConsoleCommandSource()).thenReturn(console);
+
+    CommandForwarder forwarder = new CommandForwarder(CHANNEL, false, true,
+        List.of("lobby"), List.of(), List.of(), true);
+    forwarder.register(new Object(), proxy);
+
+    ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
+    forwarder.onPluginMessage(
+        event(id, backend("untrusted-minigames"), payload("", "stop", false, "log")));
+    verify(commands, never()).executeAsync(any(), any());
+
+    forwarder.onPluginMessage(event(id, backend("lobby"), payload("", "stop", false, "log")));
+    verify(commands).executeAsync(console, "stop");
+  }
+
+  @Test
+  void appliesCommandAllowAndDenyLists() {
+    CommandManager commands = mock(CommandManager.class);
+    ProxyServer proxy = proxyWith(commands);
+    ConsoleCommandSource console = mock(ConsoleCommandSource.class);
+    when(proxy.getConsoleCommandSource()).thenReturn(console);
+
+    CommandForwarder forwarder = new CommandForwarder(CHANNEL, false, true,
+        List.of(), List.of("alert", "send"), List.of("send"), true);
+    forwarder.register(new Object(), proxy);
+
+    ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
+    // Not on the allow-list.
+    forwarder.onPluginMessage(
+        event(id, backend("lobby"), payload("", "stop", false, "log")));
+    // On the allow-list, but also deny-listed — deny wins.
+    forwarder.onPluginMessage(
+        event(id, backend("lobby"), payload("", "send player lobby", false, "log")));
+    verify(commands, never()).executeAsync(any(), any());
+
+    // Allowed: matching is on the root word, so arguments do not matter.
+    forwarder.onPluginMessage(
+        event(id, backend("lobby"), payload("", "alert hello there", false, "log")));
+    verify(commands).executeAsync(console, "alert hello there");
+  }
+
+  @Test
+  void disabledForwarderIgnoresMessagesUntilSwitchedOn() {
+    CommandManager commands = mock(CommandManager.class);
+    ProxyServer proxy = proxyWith(commands);
+    ConsoleCommandSource console = mock(ConsoleCommandSource.class);
+    when(proxy.getConsoleCommandSource()).thenReturn(console);
+
+    CommandForwarder forwarder = new CommandForwarder(CHANNEL, false, true,
+        List.of(), List.of(), List.of(), false);
+    forwarder.register(new Object(), proxy);
+
+    ChannelIdentifier id = MinecraftChannelIdentifier.create("velocity_command_forward", "main");
+    forwarder.onPluginMessage(event(id, backend("lobby"), payload("", "stop", false, "log")));
+    verify(commands, never()).executeAsync(any(), any());
+
+    forwarder.setEnabled(true);
+    forwarder.onPluginMessage(event(id, backend("lobby"), payload("", "stop", false, "log")));
+    verify(commands).executeAsync(console, "stop");
   }
 }

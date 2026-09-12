@@ -73,10 +73,26 @@ packet-queue-max-depth = 256
 connection-throttle = true
 connection-throttle-max-per-second = 30
 
+# How connection sources are grouped for the throttle and the bot filter, as CIDR
+# prefix lengths.  IPv4 defaults to /32 (one counter per address).  IPv6 defaults
+# to /64 because that is the smallest block normally handed to one subscriber: an
+# attacker with a single /64 owns 2^64 addresses, and counting each one separately
+# means the limits never trigger and the tracking tables thrash.  Lower the IPv4
+# value (e.g. 24) only if you are willing to rate-limit whole networks together.
+connection-throttle-ipv4-prefix = 32
+connection-throttle-ipv6-prefix = 64
+
+# Minimum gap, in milliseconds, between "dropping connections from X" log lines for
+# one source; drops in between are counted and reported in the next line.  A flood
+# is exactly when per-connection logging would become its own denial of service.
+# Set to 0 to log every drop.
+connection-throttle-log-interval-ms = 5000
+
 # Cache backend tab-completion responses for a short TTL.  Heavy tab spam on creative/build
 # servers currently re-hits the backend; this absorbs the burst at near-zero CPU on the proxy.
-# Entries are keyed on (server, prefix), so suggestions cannot leak across backends.  Default
-# is OFF because the integration point in ClientPlaySessionHandler is opt-in.
+# Entries are keyed on (player, server, prefix): completions are permission-filtered for the
+# player who asked, so a shared entry would replay a staff member's command list to everyone.
+# Default is OFF because the integration point in ClientPlaySessionHandler is opt-in.
 tab-complete-cache              = false
 tab-complete-cache-ttl-ms       = 1500
 tab-complete-cache-max-entries  = 1024
@@ -109,14 +125,35 @@ slow-connection-threshold-ms = 3000
 health-check-enabled     = true
 health-check-interval-ms = 10000
 
-# Ordered list of preferred fallback server names.  Used both for /server kicks
-# (FallbackRouter) and graceful shutdown.  The first server in the list that is
-# healthy and registered is chosen.  Leave empty to disable fallback routing.
+# Hysteresis.  A backend is only marked unhealthy after this many consecutive failed
+# pings, and only marked healthy again after this many consecutive successful ones.
+# Flipping on a single missed ping makes routing flap, because one long GC pause on a
+# backend is enough to miss one.  Set failure-threshold to 1 for the old behaviour.
+health-check-failure-threshold = 3
+health-check-success-threshold = 2
+
+# Ordered list of preferred fallback server names, as they appear in velocity.toml's
+# [servers] table.  Quote them: TOML has no bare words, so ["hardcore", "lobby"] is
+# valid and [hardcore, lobby] is a parse error.
+#
+# A player is sent to the first entry that is registered, healthy and not draining
+# when they lose the server they were on:
+#   * their backend kicked them or went down under them;
+#   * their initial server could not be reached when they logged in;
+#   * the proxy is shutting down (graceful-shutdown moves everyone here first).
+# Velocity's own `try` list in velocity.toml is consulted first and is only
+# overridden when the server it chose is one Conduit knows is down or draining.
+# A player who still has their current server is left on it rather than moved.
+#
+# Leave empty to fall back to any other healthy server, and then to Velocity's
+# default behaviour (disconnect).
 fallback-servers = []
 
-# Cache server-list ping responses per remote IP.  Cuts CPU for status scanners
-# and reduces backend ping volume.  TTL is in milliseconds; the cache is bounded
-# to 4 096 distinct IPs (LRU eviction beyond that).
+# Cache server-list ping responses.  Cuts CPU for status scanners and reduces
+# backend ping volume.  Entries are keyed on (address, client protocol version,
+# hostname), so two clients behind one NAT — or one client pinging two of your
+# hostnames — never receive each other's answer.  TTL is in milliseconds; the
+# cache is bounded to 4 096 distinct keys (LRU eviction beyond that).
 motd-cache-enabled = true
 motd-cache-ttl-ms  = 2000
 
@@ -191,12 +228,23 @@ mod-compatibility = []
 # ─────────────────────────────────────────────────────────────────────────────
 [metrics]
 
-# Expose Conduit diagnostics counters as compact JSON over HTTP.
+# Expose Conduit diagnostics counters over HTTP.
 # Keep this bound to loopback unless you put it behind your own firewall.
 http-enabled = false
 http-host = "127.0.0.1"
 http-port = 9589
+
+# Path serving the compact JSON snapshot.
 http-path = "/metrics"
+
+# Path serving the same counters in the Prometheus text exposition format, so the
+# endpoint can be scraped directly.  Must differ from http-path.
+prometheus-path = "/metrics/prometheus"
+
+# When set, every request must carry `Authorization: Bearer <token>` or it is
+# refused with 401.  Leave empty for no authentication (fine on loopback; set a
+# token before binding http-host anywhere else).
+auth-token = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -336,7 +384,23 @@ require-permission = false
 
 # Echo the backend-supplied log line to the proxy console when a command is forwarded (commands the
 # backend marks as "filtered" are always silent). Set false to keep the proxy console quiet.
+# The line is flattened to one line and length-capped before it is printed, so a backend cannot
+# forge log entries that look like they came from the proxy.
 log-forwarded-commands = true
+
+# Backends allowed to forward commands, by server name. Empty means every backend may.
+# A forwarded console command carries the proxy console's full authority, so if any backend on the
+# network is less trusted than your own — a community-run minigame box, say — name the ones that
+# may forward here.
+allowed-servers = []
+
+# Root command words a backend may forward. Empty means every command is allowed.
+# e.g. command-allowlist = ["send", "alert"]
+command-allowlist = []
+
+# Root command words that are always refused, regardless of the allow-list.
+# e.g. command-denylist = ["sparkv", "conduit"]
+command-denylist = []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

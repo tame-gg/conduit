@@ -87,11 +87,16 @@ public class MaintenanceManager {
     public boolean isActive() {
       return false;
     }
+
+    @Override
+    public void reconfigure(String kickMessage, String maintenanceMotd, List<String> allowlist) {
+      // no-op
+    }
   };
 
   private final Path configDir;
-  private final String kickMessage;
-  private final String maintenanceMotd;
+  private volatile String kickMessage;
+  private volatile String maintenanceMotd;
   private final Set<String> allowlist;
   private volatile boolean active;
 
@@ -180,6 +185,27 @@ public class MaintenanceManager {
   /** Returns whether maintenance mode is currently active. */
   public boolean isActive() {
     return active;
+  }
+
+  /**
+   * Replaces the messages and allow-list, e.g. after {@code /conduit reload}. The active state is
+   * deliberately untouched: it is runtime state an operator toggled, not configuration.
+   *
+   * @param kickMessage     MiniMessage string shown to denied players
+   * @param maintenanceMotd MiniMessage string used for the server-list MOTD while active
+   * @param allowlist       usernames (case-insensitive) always permitted to connect
+   */
+  public void reconfigure(String kickMessage, String maintenanceMotd, List<String> allowlist) {
+    this.kickMessage = kickMessage;
+    this.maintenanceMotd = maintenanceMotd;
+    Set<String> updated = new CopyOnWriteArraySet<>();
+    for (String name : allowlist) {
+      if (name != null && !name.isBlank()) {
+        updated.add(name.toLowerCase(Locale.ROOT));
+      }
+    }
+    this.allowlist.retainAll(updated);
+    this.allowlist.addAll(updated);
   }
 
   /**

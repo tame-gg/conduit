@@ -20,6 +20,7 @@ package com.velocitypowered.proxy.conduit.permission;
 import com.velocitypowered.proxy.conduit.command.ConduitCommand;
 import com.velocitypowered.proxy.conduit.command.ModListCommand;
 import com.velocitypowered.proxy.conduit.forward.CommandForwarder;
+import com.velocitypowered.proxy.conduit.health.FallbackRouter;
 import com.velocitypowered.proxy.conduit.maintenance.MaintenanceManager;
 import com.velocitypowered.proxy.conduit.security.ChannelGuard;
 import com.velocitypowered.proxy.conduit.update.UpdateNotifier;
@@ -51,6 +52,7 @@ public final class ConduitPermissions {
         MaintenanceManager.BYPASS_PERMISSION,
         ChannelGuard.BYPASS_PERMISSION,
         UpdateNotifier.PERMISSION,
-        CommandForwarder.EXECUTE_PERMISSION);
+        CommandForwarder.EXECUTE_PERMISSION,
+        FallbackRouter.DRAIN_BYPASS_PERMISSION);
   }
 }

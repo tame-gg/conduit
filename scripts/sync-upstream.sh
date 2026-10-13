@@ -1,34 +1,29 @@
 #!/usr/bin/env bash
-# sync-upstream.sh — Pull the latest upstream Velocity-CTD changes and merge them.
-# Run this periodically to keep Conduit current with Velocity-CTD updates.
+# sync-upstream.sh — Show how far upstream Velocity-CTD dev/4.0.0 has moved past the pinned commit.
+# Run this periodically; moving the pin is a deliberate edit (see below).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 UPSTREAM_DIR="$ROOT_DIR/.upstream-velocity"
-UPSTREAM_BRANCH="libdeflate"
+UPSTREAM_BRANCH="dev/4.0.0"
+# setup.sh pins the exact commit (UPSTREAM_COMMIT). This script only shows what the branch has
+# gained since the pin; bump UPSTREAM_COMMIT in setup.sh/setup.ps1/gradle.properties to move it.
 
 echo "==> Fetching upstream changes..."
 git -C "$UPSTREAM_DIR" remote set-url origin "https://github.com/GemstoneGG/Velocity-CTD.git"
 git -C "$UPSTREAM_DIR" fetch origin "$UPSTREAM_BRANCH"
 
-OLD_HEAD=$(git -C "$UPSTREAM_DIR" rev-parse HEAD)
-git -C "$UPSTREAM_DIR" checkout "origin/$UPSTREAM_BRANCH"
-NEW_HEAD=$(git -C "$UPSTREAM_DIR" rev-parse HEAD)
+PINNED=$(sed -n 's/^UPSTREAM_COMMIT="\(.*\)"$/\1/p' "$SCRIPT_DIR/setup.sh")
+LATEST=$(git -C "$UPSTREAM_DIR" rev-parse FETCH_HEAD)
 
-if [[ "$OLD_HEAD" == "$NEW_HEAD" ]]; then
-  echo "==> Upstream is already up to date ($OLD_HEAD)."
+if [[ "$PINNED" == "$LATEST" ]]; then
+  echo "==> Pin is current with $UPSTREAM_BRANCH ($PINNED)."
   exit 0
 fi
 
-echo "==> Upstream advanced: $OLD_HEAD → $NEW_HEAD"
-echo "==> Changelog since last sync:"
-git -C "$UPSTREAM_DIR" log --oneline "$OLD_HEAD..$NEW_HEAD"
-
+echo "==> $UPSTREAM_BRANCH is at $LATEST; Conduit is pinned to $PINNED."
+git -C "$UPSTREAM_DIR" log --oneline -n 20 "$LATEST" 2>/dev/null || true
 echo ""
-echo "==> Re-running setup to apply upstream changes..."
-"$SCRIPT_DIR/setup.sh"
-
-echo ""
-echo "==> Upstream sync complete."
-echo "    Review any conflicts in overlays/ before committing."
+echo "    To move the pin, set UPSTREAM_COMMIT=$LATEST in scripts/setup.sh and scripts/setup.ps1,"
+echo "    update conduit.upstream.commit in gradle.properties, re-run setup and review overlays/."

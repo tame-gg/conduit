@@ -9,24 +9,29 @@ $ErrorActionPreference = "Stop"
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir    = Split-Path -Parent $ScriptDir
 $UpstreamRepo   = "https://github.com/GemstoneGG/Velocity-CTD.git"
-$UpstreamBranch = "libdeflate"
+# Pinned to an exact Velocity-CTD commit on dev/4.0.0 (the old libdeflate branch was deleted).
+$UpstreamBranch = "dev/4.0.0"
+$UpstreamCommit = "2c8f0504b74c8218a7d31bcd1f8c9e6ce4288f5e"
 $UpstreamDir    = Join-Path $RootDir ".upstream-velocity"
 
 Write-Host "==> Conduit setup"
 Write-Host "    Root:     $RootDir"
-Write-Host "    Upstream: $UpstreamRepo @ $UpstreamBranch"
+Write-Host "    Upstream: $UpstreamRepo @ $UpstreamBranch ($UpstreamCommit)"
 Write-Host ""
 
 # ── 1. Clone or update upstream ──────────────────────────────────────────────
-if (Test-Path (Join-Path $UpstreamDir ".git")) {
-    Write-Host "==> Updating cached upstream clone..."
-    git -C $UpstreamDir remote set-url origin $UpstreamRepo
-    git -C $UpstreamDir fetch --depth=1 origin $UpstreamBranch
-    git -C $UpstreamDir checkout FETCH_HEAD
-} else {
-    Write-Host "==> Cloning upstream Velocity-CTD (depth=1)..."
-    git clone --depth=1 --branch $UpstreamBranch $UpstreamRepo $UpstreamDir
+if (-not (Test-Path (Join-Path $UpstreamDir ".git"))) {
+    Write-Host "==> Initialising upstream Velocity-CTD clone..."
+    git init -q $UpstreamDir
+    git -C $UpstreamDir remote add origin $UpstreamRepo
 }
+Write-Host "==> Fetching pinned upstream commit $UpstreamCommit (depth=1)..."
+git -C $UpstreamDir remote set-url origin $UpstreamRepo
+git -C $UpstreamDir fetch --depth=1 origin $UpstreamCommit
+if ($LASTEXITCODE -ne 0) { throw "git fetch of $UpstreamCommit failed" }
+git -C $UpstreamDir checkout -q --detach FETCH_HEAD
+$Actual = (git -C $UpstreamDir rev-parse HEAD).Trim()
+if ($Actual -ne $UpstreamCommit) { throw "upstream HEAD is $Actual, expected $UpstreamCommit" }
 
 # ── Helper: mirror a directory, deleting files not in source ─────────────────
 # Equivalent to: rsync -a --delete --exclude='**/X.java' src/ dst/

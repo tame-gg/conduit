@@ -6,7 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 UPSTREAM_REPO="https://github.com/GemstoneGG/Velocity-CTD.git"
-UPSTREAM_BRANCH="libdeflate"
+# Pinned to an exact Velocity-CTD commit on dev/4.0.0 (the old libdeflate branch was deleted).
+UPSTREAM_BRANCH="dev/4.0.0"
+UPSTREAM_COMMIT="2c8f0504b74c8218a7d31bcd1f8c9e6ce4288f5e"
 UPSTREAM_DIR="$ROOT_DIR/.upstream-velocity"
 CI_MODE=false
 
@@ -16,18 +18,23 @@ done
 
 echo "==> Conduit setup"
 echo "    Root:     $ROOT_DIR"
-echo "    Upstream: $UPSTREAM_REPO @ $UPSTREAM_BRANCH"
+echo "    Upstream: $UPSTREAM_REPO @ $UPSTREAM_BRANCH ($UPSTREAM_COMMIT)"
 echo ""
 
 # ── 1. Clone or update upstream ──────────────────────────────────────────────
-if [[ -d "$UPSTREAM_DIR/.git" ]]; then
-  echo "==> Updating cached upstream clone..."
-  git -C "$UPSTREAM_DIR" remote set-url origin "$UPSTREAM_REPO"
-  git -C "$UPSTREAM_DIR" fetch --depth=1 origin "$UPSTREAM_BRANCH"
-  git -C "$UPSTREAM_DIR" checkout FETCH_HEAD
-else
-  echo "==> Cloning upstream Velocity-CTD (depth=1)..."
-  git clone --depth=1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" "$UPSTREAM_DIR"
+if [[ ! -d "$UPSTREAM_DIR/.git" ]]; then
+  echo "==> Initialising upstream Velocity-CTD clone..."
+  git init -q "$UPSTREAM_DIR"
+  git -C "$UPSTREAM_DIR" remote add origin "$UPSTREAM_REPO"
+fi
+echo "==> Fetching pinned upstream commit $UPSTREAM_COMMIT (depth=1)..."
+git -C "$UPSTREAM_DIR" remote set-url origin "$UPSTREAM_REPO"
+git -C "$UPSTREAM_DIR" fetch --depth=1 origin "$UPSTREAM_COMMIT"
+git -C "$UPSTREAM_DIR" checkout -q --detach FETCH_HEAD
+ACTUAL="$(git -C "$UPSTREAM_DIR" rev-parse HEAD)"
+if [[ "$ACTUAL" != "$UPSTREAM_COMMIT" ]]; then
+  echo "::error::upstream HEAD is $ACTUAL, expected $UPSTREAM_COMMIT" >&2
+  exit 1
 fi
 
 # ── 2. Copy upstream source into our project tree ────────────────────────────

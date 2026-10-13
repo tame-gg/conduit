@@ -141,9 +141,8 @@ cd conduit
 #### Windows
 
 ```powershell
-# Fetch new upstream commits, then re-run setup
-git -C .upstream-velocity fetch origin libdeflate
-git -C .upstream-velocity checkout FETCH_HEAD
+# Re-run setup after bumping the pin
+# Upstream is pinned to an exact commit (UPSTREAM_COMMIT in scripts/setup.ps1); bump it there first
 .\scripts\setup.ps1
 ```
 
